@@ -179,6 +179,22 @@
             stroke: rgba(0, 212, 255, 0.2);
             stroke-width: 0.5;
         }
+
+        .text-label {
+            fill: #ffd700;
+            font-size: 12px;
+            font-weight: bold;
+            text-anchor: middle;
+            pointer-events: none;
+            text-shadow: 0 0 5px #000;
+        }
+
+        .switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334; transition: .4s; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #00d4ff; }
+        input:checked + .slider:before { transform: translateX(20px); }
         
         #tooltip {
             position: absolute;
@@ -305,6 +321,24 @@
                     <input type="range" id="lineWidthSlider" min="1" max="20" value="2.5" step="0.5" style="cursor: pointer;">
                     <span id="lineWidthValue">2.5px</span>
                 </div>
+                <div style="display: flex; align-items: center; gap: 10px; color: #88ddff;">
+                    <label for="connectionDate">日期:</label>
+                    <input type="date" id="connectionDate" style="background: rgba(15, 52, 96, 0.8); color: #00d4ff; border: 1px solid #00d4ff; border-radius: 4px; padding: 5px;">
+                </div>
+                <div id="arc-controls" style="display: flex; align-items: center; gap: 15px; background: rgba(10,20,40,0.7); padding: 8px 12px; border-radius: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label class="switch">
+                            <input type="checkbox" id="arcModeToggle">
+                            <span class="slider round"></span>
+                        </label>
+                        <span>抛物线模式</span>
+                    </div>
+                    <div id="arc-height-control" style="display: none; align-items: center; gap: 8px;">
+                        <label for="arcHeightSlider">高度:</label>
+                        <input type="range" id="arcHeightSlider" min="0" max="1" value="0.2" step="0.01" style="cursor: pointer;">
+                        <span id="arcHeightValue">0.2</span>
+                    </div>
+                </div>
                 <span id="info">请加载地图包或单独加载各级别地图</span>
             </div>
         </div>
@@ -373,6 +407,7 @@
         
         const g = svg.append("g");
         const connectionsGroup = svg.append("g").attr("class", "connections");
+        const selectionGroup = svg.append("g").attr("class", "selection-points");
         
         // 绘制经纬网
         let graticulePath = g.append("path")
@@ -443,24 +478,30 @@
                 .attr("d", path)
                 .on("click", function(event, d) {
                     event.stopPropagation();
-                    
                     const centroid = d3.geoCentroid(d);
-                    
+                    const name = d.properties.NAME || d.properties.name ||
+                               d.properties.ADMIN || d.properties.admin || "未知";
+
                     if (selectedPoints.length === 0) {
                         selectedPoints.push(centroid);
                         d3.select(this).classed("selected", true);
                         updateConnectionMode();
-                        
-                        const name = d.properties.NAME || d.properties.name || 
-                                   d.properties.ADMIN || d.properties.admin || "未知";
                         document.getElementById("info").textContent = `✅ 已选择起点: ${name}`;
+
+                        // Immediately draw the first selection point
+                        selectionGroup.append("circle")
+                            .attr("class", "connection-point selection-point")
+                            .attr("cx", projection(centroid)[0])
+                            .attr("cy", projection(centroid)[1])
+                            .attr("r", 5);
+
                     } else if (selectedPoints.length === 1) {
                         selectedPoints.push(centroid);
-                        
-                        const name = d.properties.NAME || d.properties.name || 
-                                   d.properties.ADMIN || d.properties.admin || "未知";
                         document.getElementById("info").textContent = `✅ 已创建连接线到: ${name}`;
                         
+                        // Clear temporary selection point
+                        selectionGroup.selectAll("*").remove();
+
                         drawConnection(selectedPoints[0], selectedPoints[1]);
                         
                         selectedPoints = [];
@@ -501,6 +542,12 @@
         
         // 绘制连接线
         function drawConnection(point1, point2) {
+            const date = document.getElementById('connectionDate').value;
+            if (!date) {
+                alert("请先选择一个日期");
+                return;
+            }
+
             // 使用 D3 的球面插值创建大圆弧
             const interpolate = d3.geoInterpolate(point1, point2);
             
@@ -518,65 +565,150 @@
             
             const currentLineWidth = document.getElementById("lineWidthSlider").value;
 
+            const connectionId = `conn-${Date.now()}`;
+            const connectionData = {
+                id: connectionId,
+                point1,
+                point2,
+                arcLine,
+                date,
+                text: ''
+            };
+
+            const connectionGroup = connectionsGroup.append("g")
+                .datum(connectionData)
+                .attr("class", "connection-group")
+                .attr("id", connectionId);
+
             // 绘制弧线
-            connectionsGroup.append("path")
-                .datum(arcLine)
+            connectionGroup.append("path")
+                .datum(d => d.arcLine)
                 .attr("class", "connection-arc")
                 .attr("d", path)
-                .style("stroke-width", `${currentLineWidth}px`);
-            
-            // 绘制起点和终点标记
-            const center = [-projection.rotate()[0], -projection.rotate()[1]];
-
-            const isVisible1 = d3.geoDistance(point1, center) < Math.PI / 2;
-            const p1 = projection(point1);
-            connectionsGroup.append("circle")
-                .datum({type: "Point", coordinates: point1})
-                .attr("class", "connection-point")
-                .attr("cx", p1 ? p1[0] : -999)
-                .attr("cy", p1 ? p1[1] : -999)
-                .attr("r", 5)
-                .style("display", isVisible1 ? "block" : "none");
-
-            const isVisible2 = d3.geoDistance(point2, center) < Math.PI / 2;
-            const p2 = projection(point2);
-            connectionsGroup.append("circle")
-                .datum({type: "Point", coordinates: point2})
-                .attr("class", "connection-point")
-                .attr("cx", p2 ? p2[0] : -999)
-                .attr("cy", p2 ? p2[1] : -999)
-                .attr("r", 5)
-                .style("display", isVisible2 ? "block" : "none");
-            
-            // 保存连接
-            connections.push({point1, point2, arcLine});
-        }
-        
-        // 更新所有连接线的位置
-        function updateConnections() {
-            connectionsGroup.selectAll("path").attr("d", path);
-            
-            const center = [-projection.rotate()[0], -projection.rotate()[1]];
-            
-            connectionsGroup.selectAll("circle")
-                .each(function(d) {
-                    const circle = d3.select(this);
-                    const isVisible = d3.geoDistance(d.coordinates, center) < Math.PI / 2;
-                    
-                    if (isVisible) {
-                        const p = projection(d.coordinates);
-                        circle.attr("cx", p[0])
-                              .attr("cy", p[1])
-                              .style("display", "block");
-                    } else {
-                        circle.style("display", "none");
+                .style("stroke-width", `${currentLineWidth}px`)
+                .on('dblclick', function(event) {
+                    event.stopPropagation();
+                    const parentData = d3.select(this.parentNode).datum();
+                    const newText = prompt("请输入标签文本:", parentData.text);
+                    if (newText !== null) {
+                        parentData.text = newText;
+                        renderOrUpdateTextLabels();
                     }
                 });
+            
+            // 绘制起点和终点标记
+            connectionGroup.append("circle")
+                .attr("class", "connection-point start-point")
+                .attr("r", 5);
+
+            connectionGroup.append("circle")
+                .attr("class", "connection-point end-point")
+                .attr("r", 5);
+            
+            // 保存连接
+            connections.push(connectionData);
+        }
+        
+        function generateArcPath(d) {
+            const arcMode = document.getElementById('arcModeToggle').checked;
+            if (!arcMode) {
+                return path(d.arcLine);
+            }
+
+            const arcHeight = +document.getElementById('arcHeightSlider').value;
+            const interpolate = d3.geoInterpolate(d.point1, d.point2);
+            const midPoint = interpolate(0.5);
+            const startPoint = projection(d.point1);
+            const endPoint = projection(d.point2);
+
+            if (!startPoint || !endPoint) return "M0,0";
+
+            const controlPoint = projection(midPoint);
+            const dist = Math.sqrt(Math.pow(endPoint[0] - startPoint[0], 2) + Math.pow(endPoint[1] - startPoint[1], 2));
+
+            controlPoint[1] -= dist * arcHeight;
+
+            return `M${startPoint[0]},${startPoint[1]} Q${controlPoint[0]},${controlPoint[1]} ${endPoint[0]},${endPoint[1]}`;
+        }
+
+        // 更新所有连接线的位置
+        function updateConnections() {
+            const center = [-projection.rotate()[0], -projection.rotate()[1]];
+
+            connectionsGroup.selectAll('.connection-group')
+                .each(function(d) {
+                    const group = d3.select(this);
+                    const isVisible1 = d3.geoDistance(d.point1, center) < Math.PI / 2;
+                    const isVisible2 = d3.geoDistance(d.point2, center) < Math.PI / 2;
+                    const midPoint = d3.geoInterpolate(d.point1, d.point2)(0.5);
+                    const isMidVisible = d3.geoDistance(midPoint, center) < Math.PI / 2;
+
+                    group.style('display', isVisible1 || isVisible2 || isMidVisible ? 'block' : 'none');
+
+                    group.select('.connection-arc').attr('d', generateArcPath(d));
+
+                    const p1 = projection(d.point1);
+                    group.select('.start-point')
+                        .attr('cx', p1 ? p1[0] : -999)
+                        .attr('cy', p1 ? p1[1] : -999)
+                        .style('display', isVisible1 ? 'block' : 'none');
+
+                    const p2 = projection(d.point2);
+                    group.select('.end-point')
+                        .attr('cx', p2 ? p2[0] : -999)
+                        .attr('cy', p2 ? p2[1] : -999)
+                        .style('display', isVisible2 ? 'block' : 'none');
+                });
+
+            renderOrUpdateTextLabels();
+
+            // Update temporary selection point
+            if (selectedPoints.length === 1) {
+                const p = projection(selectedPoints[0]);
+                selectionGroup.select('.selection-point')
+                    .attr('cx', p[0])
+                    .attr('cy', p[1]);
+            }
+
+            // Also update the main country paths
+            g.selectAll(".country").attr("d", path);
+            graticulePath.attr("d", path);
+        }
+
+        function renderOrUpdateTextLabels() {
+            connectionsGroup.selectAll('.connection-group').each(function(d) {
+                const group = d3.select(this);
+                let label = group.select('.text-label');
+
+                if (d.text && label.empty()) {
+                    label = group.append('text').attr('class', 'text-label');
+                }
+
+                if (d.text) {
+                    const p1 = d.point1;
+                    const p2 = d.point2;
+                    const midPoint = d3.geoInterpolate(p1, p2)(0.5);
+                    const center = [-projection.rotate()[0], -projection.rotate()[1]];
+                    const isVisible = d3.geoDistance(midPoint, center) < Math.PI / 2;
+                    
+                    if (isVisible) {
+                        const pos = projection(midPoint);
+                        label.attr('transform', `translate(${pos[0]}, ${pos[1]})`)
+                             .text(d.text)
+                             .style('display', 'block');
+                    } else {
+                        label.style('display', 'none');
+                    }
+                } else if (!label.empty()) {
+                    label.remove();
+                }
+            });
         }
         
         // 清除所有连接线
         function clearConnections() {
             connectionsGroup.selectAll("*").remove();
+            selectionGroup.selectAll("*").remove();
             connections = [];
             selectedPoints = [];
             g.selectAll(".country").classed("selected", false);
@@ -999,6 +1131,33 @@
             lineWidthValue.textContent = `${newWidth}px`;
             connectionsGroup.selectAll(".connection-arc").style("stroke-width", `${newWidth}px`);
         });
+
+        document.getElementById('connectionDate').addEventListener('change', function() {
+            // When date changes, clear any pending selections
+            if (selectedPoints.length > 0) {
+                selectedPoints = [];
+                g.selectAll(".country").classed("selected", false);
+                updateConnectionMode();
+                document.getElementById("info").textContent = "日期已更改，请重新选择起点。";
+            }
+            filterConnectionsByDate(this.value);
+        });
+
+        document.getElementById('arcModeToggle').addEventListener('change', function() {
+            const arcHeightControl = document.getElementById('arc-height-control');
+            arcHeightControl.style.display = this.checked ? 'flex' : 'none';
+            updateConnections();
+        });
+
+        document.getElementById('arcHeightSlider').addEventListener('input', function() {
+            document.getElementById('arcHeightValue').textContent = this.value;
+            updateConnections();
+        });
+
+        function filterConnectionsByDate(selectedDate) {
+            connectionsGroup.selectAll('.connection-group')
+                .style('display', d => (d.date === selectedDate) ? 'block' : 'none');
+        }
         
         function updateRotationStatus() {
             const btn = document.getElementById("toggleRotation");
@@ -1035,6 +1194,9 @@
 
         window.addEventListener('resize', handleResize);
         handleResize(); // Initial call
+
+        // Set default date to today
+        document.getElementById('connectionDate').valueAsDate = new Date();
     </script>
 </body>
 </html>
