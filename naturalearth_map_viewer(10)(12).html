@@ -616,6 +616,7 @@
                 rotation[0] = (rotation[0] + rotationSpeed) % 360;
                 projection.rotate(rotation);
                 svg.selectAll(".sphere, .country, .graticule").attr("d", path);
+                updateConnections(); // Specifically update connections
                 updateDebugInfo();
             }
         });
@@ -1011,6 +1012,9 @@
             }
         }
         
+        // Initial call to set button text correctly
+        updateRotationStatus();
+
         function handleResize() {
             width = globeContainer.clientWidth;
             height = globeContainer.clientHeight;
