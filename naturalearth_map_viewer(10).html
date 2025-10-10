@@ -1,0 +1,1176 @@
+                    
+                    shapefile.open(arrayBuffer)
+                        .then(source => {
+                            const features = [];
+                            
+                            function readNext() {
+                                return source.read().then(result => {
+                                    if (result.done) {
+                                        return features;
+                                    }
+                                    features.push(result.value);
+                                    return readNext();
+                                });
+                            }
+                            
+                            return readNext();
+                        })
+                        .then(function(features) {
+                            console.log("从 ZIP 读取到", features.length, "个要素");
+                            const geojson = {
+                                type: "FeatureCollection",
+                                features: features
+                            };
+                            renderGeoJSON(geojson);
+                        })
+                        .catch(function(error) {
+                            console.error("ZIP 解析错误:", error);
+                            alert("ZIP 文件解析失败: " + error.message);
+                            document.getElementById("info").textContent = "❌ ZIP 加载失败";
+                        });
+                } catch (error) {
+                    console.error("读取 ZIP 错误:", error);
+                    alert("读取 ZIP 文件失败: " + error.message);
+                    document.getElementById("info").textContent = "❌ ZIP 读取失败";
+                }
+            };
+            
+            reader.onerror = function() {
+                alert("ZIP 文件读取错误");
+                document.getElementById("info").textContent = "❌ ZIP 读取错误";
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 球形地球观察器</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/shapefile@0.6.6/dist/shapefile.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a14 100%);
+            color: #eee;
+            overflow: hidden;
+        }
+        
+        #container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        #header {
+            background: linear-gradient(135deg, #16213e 0%, #0f1926 100%);
+            padding: 15px 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 10;
+            backdrop-filter: blur(10px);
+        }
+        
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #00d4ff 0%, #0099ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: bold;
+        }
+        
+        #controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+        
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: -9999px;
+        }
+        
+        .file-input-label {
+            background: linear-gradient(135deg, #00d4ff 0%, #0099ff 100%);
+            color: #0a0a14;
+            padding: 10px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+        }
+        
+        .file-input-label:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 212, 255, 0.5);
+        }
+        
+        button {
+            background: rgba(15, 52, 96, 0.8);
+            color: #00d4ff;
+            border: 2px solid #00d4ff;
+            padding: 8px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            backdrop-filter: blur(10px);
+        }
+        
+        button:hover {
+            background: rgba(0, 212, 255, 0.2);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+        }
+        
+        #info {
+            color: #88ddff;
+            font-size: 13px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        #map-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #globe-container {
+            position: relative;
+        }
+        
+        svg {
+            display: block;
+        }
+        
+        .sphere {
+            fill: url(#ocean-gradient);
+        }
+        
+        .country {
+            fill: #1e3a5f;
+            stroke: #00d4ff;
+            stroke-width: 0.5;
+            transition: all 0.3s;
+        }
+        
+        .country:hover {
+            fill: #2d5a8f;
+            stroke: #00ffff;
+            stroke-width: 1.5;
+            filter: drop-shadow(0 0 10px rgba(0, 255, 255, 0.8));
+            cursor: pointer;
+        }
+        
+        .country.selected {
+            fill: #ff6b35;
+            stroke: #ffaa00;
+            stroke-width: 2;
+        }
+        
+        .connection-arc {
+            fill: none;
+            stroke: #00ffff;
+            stroke-width: 2.5;
+            opacity: 0.8;
+            filter: drop-shadow(0 0 8px rgba(0, 255, 255, 0.8));
+            pointer-events: none;
+        }
+        
+        .connection-point {
+            fill: #ff6b35;
+            stroke: #ffaa00;
+            stroke-width: 2;
+            filter: drop-shadow(0 0 10px rgba(255, 107, 53, 0.8));
+        }
+        
+        .graticule {
+            fill: none;
+            stroke: rgba(0, 212, 255, 0.2);
+            stroke-width: 0.5;
+        }
+        
+        #tooltip {
+            position: absolute;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.95) 0%, rgba(0, 150, 255, 0.95) 100%);
+            color: #0a0a14;
+            padding: 10px 16px;
+            border-radius: 8px;
+            pointer-events: none;
+            display: none;
+            font-size: 14px;
+            font-weight: bold;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        #legend {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            background: rgba(22, 33, 62, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid #00d4ff;
+            font-size: 13px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        
+        .legend-title {
+            font-weight: bold;
+            margin-bottom: 12px;
+            color: #00d4ff;
+            font-size: 15px;
+            text-shadow: 0 2px 4px rgba(0, 212, 255, 0.5);
+        }
+        
+        .legend-item {
+            margin: 8px 0;
+            color: #88ddff;
+        }
+        
+        #rotation-info {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            background: rgba(22, 33, 62, 0.85);
+            padding: 15px 20px;
+            border-radius: 12px;
+            border: 2px solid #00d4ff;
+            font-size: 12px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            color: #88ddff;
+            font-family: 'Courier New', monospace;
+        }
+        
+        #debug-info {
+            position: absolute;
+            top: 120px;
+            right: 30px;
+            background: rgba(22, 33, 62, 0.85);
+            padding: 15px 20px;
+            border-radius: 12px;
+            border: 2px solid #ff8800;
+            font-size: 11px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            color: #ffaa44;
+            font-family: 'Courier New', monospace;
+            max-width: 300px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff88;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="header">
+            <h1>🌍 3D 球形地球观察器</h1>
+            <div id="controls">
+                <div class="file-input-wrapper">
+                    <label for="fileInputBundle" class="file-input-label">📦 加载地图包（ZIP）</label>
+                    <input type="file" id="fileInputBundle" accept=".zip" />
+                </div>
+                <div style="margin-left: 10px; color: #88ddff; font-size: 12px;">
+                    或单独加载：
+                </div>
+                <div class="file-input-wrapper">
+                    <label for="fileInput110m" class="file-input-label" style="font-size: 12px; padding: 6px 12px;">1:110m</label>
+                    <input type="file" id="fileInput110m" accept=".geojson,.json,.shp,.zip" multiple />
+                </div>
+                <div class="file-input-wrapper">
+                    <label for="fileInput50m" class="file-input-label" style="font-size: 12px; padding: 6px 12px;">1:50m</label>
+                    <input type="file" id="fileInput50m" accept=".geojson,.json,.shp,.zip" multiple />
+                </div>
+                <div class="file-input-wrapper">
+                    <label for="fileInput10m" class="file-input-label" style="font-size: 12px; padding: 6px 12px;">1:10m</label>
+                    <input type="file" id="fileInput10m" accept=".geojson,.json,.shp,.zip" multiple />
+                </div>
+                <button id="resetBtn">🔄 重置视图</button>
+                <button id="toggleGraticule">🌐 切换经纬网</button>
+                <button id="toggleRotation">⏸️ 暂停旋转</button>
+                <button id="clearConnections">🗑️ 清除连接线</button>
+                <span id="info">请加载地图包或单独加载各级别地图</span>
+            </div>
+        </div>
+        
+        <div id="map-container">
+            <div id="globe-container">
+                <svg id="globe"></svg>
+            </div>
+            <div id="tooltip"></div>
+            <div id="legend">
+                <div class="legend-title">🎮 操作说明</div>
+                <div class="legend-item">🖱️ 拖拽: 旋转地球（任意方向）</div>
+                <div class="legend-item">🖱️ 滚轮: 缩放视图</div>
+                <div class="legend-item">🖱️ 悬停: 查看国家</div>
+                <div class="legend-item">👆 点击: 选择两个地点连线</div>
+                <div class="legend-item">⏸️ 按钮: 控制自动旋转</div>
+            </div>
+            <div id="rotation-info">
+                <span class="status-indicator"></span>
+                <span id="rotation-status">自动旋转中...</span>
+            </div>
+            <div id="debug-info">
+                <div><strong>🔍 调试信息</strong></div>
+                <div>经度: <span id="debug-lon">0°</span></div>
+                <div>纬度: <span id="debug-lat">0°</span></div>
+                <div>缩放: <span id="debug-zoom">1.0x</span></div>
+                <div>当前地图: <span id="debug-lod">未加载</span></div>
+                <div>可见国家: <span id="debug-visible">0</span></div>
+                <div>总国家数: <span id="debug-total">0</span></div>
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ffaa44;">
+                    <strong>📍 连接线模式</strong><br>
+                    <span id="connection-mode">待选择起点</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const width = Math.min(window.innerWidth, window.innerHeight - 100) * 0.9;
+        const height = width;
+        
+        const svg = d3.select("#globe")
+            .attr("width", width)
+            .attr("height", height);
+        
+        // 创建渐变
+        const defs = svg.append("defs");
+        const oceanGradient = defs.append("radialGradient")
+            .attr("id", "ocean-gradient");
+        oceanGradient.append("stop")
+            .attr("offset", "0%")
+            .attr("stop-color", "#1a3d5c");
+        oceanGradient.append("stop")
+            .attr("offset", "100%")
+            .attr("stop-color", "#0a1929");
+        
+        const projection = d3.geoOrthographic()
+            .scale(width / 2.2)
+            .translate([width / 2, height / 2])
+            .rotate([0, 0, 0])  // 初始化为赤道视角
+            .clipAngle(90);
+        
+        const path = d3.geoPath().projection(projection);
+        const graticule = d3.geoGraticule();
+        
+        // 绘制球体
+        svg.append("path")
+            .datum({type: "Sphere"})
+            .attr("class", "sphere")
+            .attr("d", path);
+        
+        const g = svg.append("g");
+        const connectionsGroup = svg.append("g").attr("class", "connections");
+        
+        // 绘制经纬网
+        let graticulePath = g.append("path")
+            .datum(graticule)
+            .attr("class", "graticule")
+            .attr("d", path);
+        
+        let showGraticule = true;
+        let isRotating = true;
+        let rotation = [0, 0];
+        
+        let currentGeoJSON = null;
+        let selectedPoints = [];
+        let connections = [];
+        
+        // LOD 系统：存储不同精度的地图
+        let mapLOD = {
+            '110m': null,  // 最粗糙，缩放 0.5 - 1.5
+            '50m': null,   // 中等，缩放 1.5 - 3.0
+            '10m': null    // 最精细，缩放 3.0+
+        };
+        let currentLOD = null;
+        
+        // 根据缩放级别切换地图
+        function switchLOD(zoomLevel) {
+            let targetLOD = null;
+            
+            if (zoomLevel < 1.5) {
+                targetLOD = '110m';
+            } else if (zoomLevel < 3.0) {
+                targetLOD = '50m';
+            } else {
+                targetLOD = '10m';
+            }
+            
+            // 如果目标 LOD 没有加载，使用已加载的最接近的
+            if (!mapLOD[targetLOD]) {
+                if (targetLOD === '110m') {
+                    targetLOD = mapLOD['50m'] ? '50m' : (mapLOD['10m'] ? '10m' : null);
+                } else if (targetLOD === '50m') {
+                    targetLOD = mapLOD['110m'] ? '110m' : (mapLOD['10m'] ? '10m' : null);
+                } else if (targetLOD === '10m') {
+                    targetLOD = mapLOD['50m'] ? '50m' : (mapLOD['110m'] ? '110m' : null);
+                }
+            }
+            
+            // 如果需要切换
+            if (targetLOD && targetLOD !== currentLOD && mapLOD[targetLOD]) {
+                console.log(`切换到 ${targetLOD} 地图 (缩放: ${zoomLevel.toFixed(2)})`);
+                currentLOD = targetLOD;
+                currentGeoJSON = mapLOD[targetLOD];
+                renderCurrentMap();
+                document.getElementById('debug-lod').textContent = targetLOD;
+            }
+        }
+        
+        // 渲染当前地图
+        function renderCurrentMap() {
+            if (!currentGeoJSON) return;
+            
+            g.selectAll(".country").remove();
+            
+            g.selectAll(".country")
+                .data(currentGeoJSON.features)
+                .enter()
+                .append("path")
+                .attr("class", "country")
+                .attr("d", path)
+                .on("click", function(event, d) {
+                    event.stopPropagation();
+                    
+                    const centroid = d3.geoCentroid(d);
+                    
+                    if (selectedPoints.length === 0) {
+                        selectedPoints.push(centroid);
+                        d3.select(this).classed("selected", true);
+                        updateConnectionMode();
+                        
+                        const name = d.properties.NAME || d.properties.name || 
+                                   d.properties.ADMIN || d.properties.admin || "未知";
+                        document.getElementById("info").textContent = `✅ 已选择起点: ${name}`;
+                    } else if (selectedPoints.length === 1) {
+                        selectedPoints.push(centroid);
+                        
+                        const name = d.properties.NAME || d.properties.name || 
+                                   d.properties.ADMIN || d.properties.admin || "未知";
+                        document.getElementById("info").textContent = `✅ 已创建连接线到: ${name}`;
+                        
+                        drawConnection(selectedPoints[0], selectedPoints[1]);
+                        
+                        selectedPoints = [];
+                        g.selectAll(".country").classed("selected", false);
+                        updateConnectionMode();
+                    }
+                })
+                .on("mouseover", function(event, d) {
+                    const name = d.properties.NAME || d.properties.name || 
+                               d.properties.ADMIN || d.properties.admin || 
+                               d.properties.NAME_LONG || d.properties.NAME_EN || 
+                               d.properties.COUNTRY || "未知";
+                    tooltip
+                        .style("display", "block")
+                        .html(name);
+                })
+                .on("mousemove", function(event) {
+                    tooltip
+                        .style("left", (event.pageX + 15) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.style("display", "none");
+                });
+        }
+        
+        // 更新连接线状态显示
+        function updateConnectionMode() {
+            const modeText = document.getElementById('connection-mode');
+            if (selectedPoints.length === 0) {
+                modeText.textContent = '待选择起点';
+                modeText.style.color = '#ffaa44';
+            } else if (selectedPoints.length === 1) {
+                modeText.textContent = '已选起点，选择终点';
+                modeText.style.color = '#00ff88';
+            }
+        }
+        
+        // 绘制连接线
+        function drawConnection(point1, point2) {
+            // 使用 D3 的球面插值创建大圆弧
+            const interpolate = d3.geoInterpolate(point1, point2);
+            
+            // 生成弧线上的点
+            const points = [];
+            for (let i = 0; i <= 100; i++) {
+                points.push(interpolate(i / 100));
+            }
+            
+            // 创建 LineString
+            const arcLine = {
+                type: "LineString",
+                coordinates: points
+            };
+            
+            // 绘制弧线
+            connectionsGroup.append("path")
+                .datum(arcLine)
+                .attr("class", "connection-arc")
+                .attr("d", path);
+            
+            // 绘制起点和终点标记
+            connectionsGroup.append("circle")
+                .datum({type: "Point", coordinates: point1})
+                .attr("class", "connection-point")
+                .attr("cx", d => {
+                    const p = projection(d.coordinates);
+                    return p ? p[0] : -999;
+                })
+                .attr("cy", d => {
+                    const p = projection(d.coordinates);
+                    return p ? p[1] : -999;
+                })
+                .attr("r", 5);
+            
+            connectionsGroup.append("circle")
+                .datum({type: "Point", coordinates: point2})
+                .attr("class", "connection-point")
+                .attr("cx", d => {
+                    const p = projection(d.coordinates);
+                    return p ? p[0] : -999;
+                })
+                .attr("cy", d => {
+                    const p = projection(d.coordinates);
+                    return p ? p[1] : -999;
+                })
+                .attr("r", 5);
+            
+            // 保存连接
+            connections.push({point1, point2, arcLine});
+        }
+        
+        // 更新所有连接线的位置
+        function updateConnections() {
+            connectionsGroup.selectAll("path").attr("d", path);
+            connectionsGroup.selectAll("circle")
+                .attr("cx", d => {
+                    const p = projection(d.coordinates);
+                    return p ? p[0] : -999;
+                })
+                .attr("cy", d => {
+                    const p = projection(d.coordinates);
+                    return p ? p[1] : -999;
+                });
+        }
+        
+        // 清除所有连接线
+        function clearConnections() {
+            connectionsGroup.selectAll("*").remove();
+            connections = [];
+            selectedPoints = [];
+            g.selectAll(".country").classed("selected", false);
+            updateConnectionMode();
+        }
+        
+        // 更新调试信息
+        function updateDebugInfo() {
+            const rotate = projection.rotate();
+            document.getElementById('debug-lon').textContent = rotate[0].toFixed(1) + '°';
+            document.getElementById('debug-lat').textContent = rotate[1].toFixed(1) + '°';
+            
+            const scale = projection.scale() / (width / 2.2);
+            document.getElementById('debug-zoom').textContent = scale.toFixed(2) + 'x';
+            
+            if (currentGeoJSON) {
+                const visible = g.selectAll('.country').nodes().filter(node => {
+                    const display = d3.select(node).style('display');
+                    const visibility = d3.select(node).style('visibility');
+                    return display !== 'none' && visibility !== 'hidden';
+                }).length;
+                
+                document.getElementById('debug-visible').textContent = visible;
+                document.getElementById('debug-total').textContent = currentGeoJSON.features.length;
+            }
+            
+            // 更新连接线位置
+            updateConnections();
+        }
+        
+        // 自动旋转
+        const rotationSpeed = 0.3;
+        let rotationTimer = d3.timer(function(elapsed) {
+            if (isRotating) {
+                rotation[0] = (rotation[0] + rotationSpeed) % 360;
+                projection.rotate(rotation);
+                g.selectAll("path").attr("d", path);
+                updateDebugInfo();
+            }
+        });
+        
+        // 拖拽旋转 - 恢复上下左右旋转
+        const drag = d3.drag()
+            .on("start", function(event) {
+                isRotating = false;
+                updateRotationStatus();
+            })
+            .on("drag", function(event) {
+                const rotate = projection.rotate();
+                const k = 75 / projection.scale();
+                // 恢复完整的旋转：左右和上下
+                projection.rotate([
+                    rotate[0] + event.dx * k,
+                    rotate[1] - event.dy * k  // 恢复纬度旋转
+                ]);
+                rotation = projection.rotate();
+                g.selectAll("path").attr("d", path);
+                updateDebugInfo();
+            });
+        
+        svg.call(drag);
+        
+        // 缩放
+        const zoom = d3.zoom()
+            .scaleExtent([0.5, 8])  // 扩大缩放范围
+            .on("zoom", function(event) {
+                const scale = (width / 2.2) * event.transform.k;
+                projection.scale(scale);
+                
+                // 根据缩放级别切换地图
+                switchLOD(event.transform.k);
+                
+                g.selectAll("path").attr("d", path);
+                updateDebugInfo();
+            });
+        
+        svg.call(zoom);
+        
+        const tooltip = d3.select("#tooltip");
+        
+        function renderGeoJSON(geojson) {
+            console.log("渲染地图数据:", geojson);
+            
+            if (!geojson || !geojson.features || geojson.features.length === 0) {
+                alert("地图数据为空或格式不正确");
+                document.getElementById("info").textContent = "❌ 地图数据无效";
+                return;
+            }
+            
+            currentGeoJSON = geojson;
+            renderCurrentMap();
+            
+            console.log("已渲染", geojson.features.length, "个要素");
+            document.getElementById("info").textContent = 
+                `✅ 已加载地图 (${geojson.features.length} 个地理要素)`;
+            
+            // 初始化调试信息
+            updateDebugInfo();
+        }
+        
+        function renderGeoJSONToLOD(geojson, lodLevel) {
+            console.log(`加载 ${lodLevel} 地图:`, geojson);
+            
+            if (!geojson || !geojson.features || geojson.features.length === 0) {
+                alert("地图数据为空或格式不正确");
+                return;
+            }
+            
+            mapLOD[lodLevel] = geojson;
+            
+            // 如果是第一次加载，或者当前没有地图，使用这个
+            if (!currentGeoJSON) {
+                currentLOD = lodLevel;
+                currentGeoJSON = geojson;
+                renderCurrentMap();
+                document.getElementById('debug-lod').textContent = lodLevel;
+            }
+            
+            console.log(`${lodLevel} 地图已加载 (${geojson.features.length} 个要素)`);
+            document.getElementById("info").textContent = 
+                `✅ ${lodLevel} 地图已加载 (${geojson.features.length} 个要素)`;
+            
+            updateDebugInfo();
+        }
+        
+        function loadGeoJSON(file, lodLevel) {
+            document.getElementById("info").textContent = `⏳ 正在加载 ${lodLevel} GeoJSON...`;
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const geojson = JSON.parse(e.target.result);
+                    console.log(`${lodLevel} GeoJSON 解析成功:`, geojson);
+                    renderGeoJSONToLOD(geojson, lodLevel);
+                } catch (error) {
+                    console.error("GeoJSON 解析错误:", error);
+                    alert("GeoJSON 文件解析失败: " + error.message);
+                    document.getElementById("info").textContent = "❌ 加载失败";
+                }
+            };
+            
+            reader.onerror = function() {
+                alert("GeoJSON 文件读取错误");
+                document.getElementById("info").textContent = "❌ 文件读取错误";
+            };
+            
+            reader.readAsText(file);
+        }
+        
+        function loadShapefile(file, lodLevel) {
+            document.getElementById("info").textContent = `⏳ 正在加载 ${lodLevel} Shapefile...`;
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const arrayBuffer = e.target.result;
+                    console.log(`开始解析 ${lodLevel} Shapefile, 大小:`, arrayBuffer.byteLength);
+                    
+                    if (typeof shapefile === 'undefined') {
+                        alert("Shapefile 库未加载，请刷新页面重试或使用 GeoJSON 格式");
+                        document.getElementById("info").textContent = "❌ Shapefile 库未加载";
+                        return;
+                    }
+                    
+                    shapefile.open(arrayBuffer)
+                        .then(source => {
+                            const features = [];
+                            
+                            function readNext() {
+                                return source.read().then(result => {
+                                    if (result.done) {
+                                        return features;
+                                    }
+                                    features.push(result.value);
+                                    return readNext();
+                                });
+                            }
+                            
+                            return readNext();
+                        })
+                        .then(function(features) {
+                            console.log(`读取到 ${lodLevel}`, features.length, "个要素");
+                            const geojson = {
+                                type: "FeatureCollection",
+                                features: features
+                            };
+                            renderGeoJSONToLOD(geojson, lodLevel);
+                        })
+                        .catch(function(error) {
+                            console.error("Shapefile 解析错误:", error);
+                            alert("Shapefile 解析失败: " + error.message);
+                            document.getElementById("info").textContent = "❌ Shapefile 加载失败";
+                        });
+                } catch (error) {
+                    console.error("读取文件错误:", error);
+                    alert("读取文件失败: " + error.message);
+                    document.getElementById("info").textContent = "❌ 文件读取失败";
+                }
+            };
+            
+            reader.onerror = function() {
+                alert("文件读取错误");
+                document.getElementById("info").textContent = "❌ 文件读取错误";
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        function loadZipFile(file, lodLevel) {
+            document.getElementById("info").textContent = `⏳ 正在加载 ${lodLevel} ZIP 文件...`;
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const arrayBuffer = e.target.result;
+                    console.log(`开始解析 ${lodLevel} ZIP, 大小:`, arrayBuffer.byteLength);
+                    
+                    if (typeof shapefile === 'undefined') {
+                        alert("Shapefile 库未加载，请刷新页面重试或使用 GeoJSON 格式");
+                        document.getElementById("info").textContent = "❌ Shapefile 库未加载";
+                        return;
+                    }
+                    
+                    shapefile.open(arrayBuffer)
+                        .then(source => {
+                            const features = [];
+                            
+                            function readNext() {
+                                return source.read().then(result => {
+                                    if (result.done) {
+                                        return features;
+                                    }
+                                    features.push(result.value);
+                                    return readNext();
+                                });
+                            }
+                            
+                            return readNext();
+                        })
+                        .then(function(features) {
+                            console.log(`从 ${lodLevel} ZIP 读取到`, features.length, "个要素");
+                            const geojson = {
+                                type: "FeatureCollection",
+                                features: features
+                            };
+                            renderGeoJSONToLOD(geojson, lodLevel);
+                        })
+                        .catch(function(error) {
+                            console.error("ZIP 解析错误:", error);
+                            alert("ZIP 文件解析失败: " + error.message);
+                            document.getElementById("info").textContent = "❌ ZIP 加载失败";
+                        });
+                } catch (error) {
+                    console.error("读取 ZIP 错误:", error);
+                    alert("读取 ZIP 文件失败: " + error.message);
+                    document.getElementById("info").textContent = "❌ ZIP 读取失败";
+                }
+            };
+            
+            reader.onerror = function() {
+                alert("ZIP 文件读取错误");
+                document.getElementById("info").textContent = "❌ ZIP 读取错误";
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        // 加载包含多个精度地图的ZIP包
+        function loadMapBundle(file) {
+            document.getElementById("info").textContent = "⏳ 正在解析地图包...";
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const arrayBuffer = e.target.result;
+                    
+                    if (typeof JSZip === 'undefined') {
+                        alert("JSZip 库未加载，请刷新页面重试");
+                        document.getElementById("info").textContent = "❌ JSZip 库未加载";
+                        return;
+                    }
+                    
+                    JSZip.loadAsync(arrayBuffer).then(function(zip) {
+                        console.log("ZIP 包内容:", Object.keys(zip.files));
+                        
+                        let loadCount = 0;
+                        let totalToLoad = 0;
+                        
+                        // 查找并加载 110m 地图
+                        Object.keys(zip.files).forEach(function(filename) {
+                            if (filename.includes('110m') && filename.endsWith('.zip')) {
+                                totalToLoad++;
+                            } else if (filename.includes('50m') && filename.endsWith('.zip')) {
+                                totalToLoad++;
+                            } else if (filename.includes('10m') && filename.endsWith('.zip')) {
+                                totalToLoad++;
+                            }
+                        });
+                        
+                        document.getElementById("info").textContent = `⏳ 找到 ${totalToLoad} 个地图文件，开始加载...`;
+                        
+                        // 加载 110m
+                        Object.keys(zip.files).forEach(function(filename) {
+                            if (filename.includes('110m') && filename.endsWith('.zip')) {
+                                console.log("找到 110m 地图:", filename);
+                                zip.files[filename].async("arraybuffer").then(function(content) {
+                                    return shapefile.open(content);
+                                }).then(function(source) {
+                                    const features = [];
+                                    function readNext() {
+                                        return source.read().then(result => {
+                                            if (result.done) return features;
+                                            features.push(result.value);
+                                            return readNext();
+                                        });
+                                    }
+                                    return readNext();
+                                }).then(function(features) {
+                                    const geojson = {
+                                        type: "FeatureCollection",
+                                        features: features
+                                    };
+                                    renderGeoJSONToLOD(geojson, '110m');
+                                    loadCount++;
+                                    document.getElementById("info").textContent = 
+                                        `✅ 已加载 ${loadCount}/${totalToLoad} 个地图 (110m: ${features.length} 要素)`;
+                                }).catch(function(error) {
+                                    console.error("110m 加载错误:", error);
+                                });
+                            }
+                        });
+                        
+                        // 加载 50m
+                        Object.keys(zip.files).forEach(function(filename) {
+                            if (filename.includes('50m') && filename.endsWith('.zip')) {
+                                console.log("找到 50m 地图:", filename);
+                                zip.files[filename].async("arraybuffer").then(function(content) {
+                                    return shapefile.open(content);
+                                }).then(function(source) {
+                                    const features = [];
+                                    function readNext() {
+                                        return source.read().then(result => {
+                                            if (result.done) return features;
+                                            features.push(result.value);
+                                            return readNext();
+                                        });
+                                    }
+                                    return readNext();
+                                }).then(function(features) {
+                                    const geojson = {
+                                        type: "FeatureCollection",
+                                        features: features
+                                    };
+                                    renderGeoJSONToLOD(geojson, '50m');
+                                    loadCount++;
+                                    document.getElementById("info").textContent = 
+                                        `✅ 已加载 ${loadCount}/${totalToLoad} 个地图 (50m: ${features.length} 要素)`;
+                                }).catch(function(error) {
+                                    console.error("50m 加载错误:", error);
+                                });
+                            }
+                        });
+                        
+                        // 加载 10m
+                        Object.keys(zip.files).forEach(function(filename) {
+                            if (filename.includes('10m') && filename.endsWith('.zip')) {
+                                console.log("找到 10m 地图:", filename);
+                                zip.files[filename].async("arraybuffer").then(function(content) {
+                                    return shapefile.open(content);
+                                }).then(function(source) {
+                                    const features = [];
+                                    function readNext() {
+                                        return source.read().then(result => {
+                                            if (result.done) return features;
+                                            features.push(result.value);
+                                            return readNext();
+                                        });
+                                    }
+                                    return readNext();
+                                }).then(function(features) {
+                                    const geojson = {
+                                        type: "FeatureCollection",
+                                        features: features
+                                    };
+                                    renderGeoJSONToLOD(geojson, '10m');
+                                    loadCount++;
+                                    document.getElementById("info").textContent = 
+                                        `✅ 已加载 ${loadCount}/${totalToLoad} 个地图 (10m: ${features.length} 要素)`;
+                                }).catch(function(error) {
+                                    console.error("10m 加载错误:", error);
+                                });
+                            }
+                        });
+                        
+                    }).catch(function(error) {
+                        console.error("解析 ZIP 包错误:", error);
+                        alert("解析地图包失败: " + error.message);
+                        document.getElementById("info").textContent = "❌ 地图包解析失败";
+                    });
+                    
+                } catch (error) {
+                    console.error("读取地图包错误:", error);
+                    alert("读取地图包失败: " + error.message);
+                    document.getElementById("info").textContent = "❌ 地图包读取失败";
+                }
+            };
+            
+            reader.onerror = function() {
+                alert("地图包文件读取错误");
+                document.getElementById("info").textContent = "❌ 文件读取错误";
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+                    
+                    shapefile.open(arrayBuffer)
+                        .then(source => {
+                            const features = [];
+                            
+                            function readNext() {
+                                return source.read().then(result => {
+                                    if (result.done) {
+                                        return features;
+                                    }
+                                    features.push(result.value);
+                                    return readNext();
+                                });
+                            }
+                            
+                            return readNext();
+                        })
+                        .then(function(features) {
+                            console.log("从 ZIP 读取到", features.length, "个要素");
+                            const geojson = {
+                                type: "FeatureCollection",
+                                features: features
+                            };
+                            renderGeoJSON(geojson);
+                        })
+                        .catch(function(error) {
+                            console.error("ZIP 解析错误:", error);
+                            alert("ZIP 文件解析失败: " + error.message);
+                            document.getElementById("info").textContent = "❌ ZIP 加载失败";
+                        });
+                } catch (error) {
+                    console.error("读取 ZIP 错误:", error);
+                    alert("读取 ZIP 文件失败: " + error.message);
+                    document.getElementById("info").textContent = "❌ ZIP 读取失败";
+                }
+            };
+            
+            reader.onerror = function() {
+                alert("ZIP 文件读取错误");
+                document.getElementById("info").textContent = "❌ ZIP 读取错误";
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        // 地图包加载按钮
+        document.getElementById("fileInputBundle").addEventListener("change", function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                console.log("加载地图包:", file.name);
+                loadMapBundle(file);
+            }
+        });
+        
+        document.getElementById("fileInput110m").addEventListener("change", function(e) {
+            const files = e.target.files;
+            if (files.length === 0) return;
+            
+            const file = files[0];
+            const fileName = file.name.toLowerCase();
+            
+            console.log("选择 1:110m 文件:", fileName);
+            
+            if (fileName.endsWith('.geojson') || fileName.endsWith('.json')) {
+                loadGeoJSON(file, '110m');
+            } else if (fileName.endsWith('.shp')) {
+                loadShapefile(file, '110m');
+            } else if (fileName.endsWith('.zip')) {
+                loadZipFile(file, '110m');
+            } else {
+                alert("不支持的文件格式");
+            }
+        });
+        
+        document.getElementById("fileInput50m").addEventListener("change", function(e) {
+            const files = e.target.files;
+            if (files.length === 0) return;
+            
+            const file = files[0];
+            const fileName = file.name.toLowerCase();
+            
+            console.log("选择 1:50m 文件:", fileName);
+            
+            if (fileName.endsWith('.geojson') || fileName.endsWith('.json')) {
+                loadGeoJSON(file, '50m');
+            } else if (fileName.endsWith('.shp')) {
+                loadShapefile(file, '50m');
+            } else if (fileName.endsWith('.zip')) {
+                loadZipFile(file, '50m');
+            } else {
+                alert("不支持的文件格式");
+            }
+        });
+        
+        document.getElementById("fileInput10m").addEventListener("change", function(e) {
+            const files = e.target.files;
+            if (files.length === 0) return;
+            
+            const file = files[0];
+            const fileName = file.name.toLowerCase();
+            
+            console.log("选择 1:10m 文件:", fileName);
+            
+            if (fileName.endsWith('.geojson') || fileName.endsWith('.json')) {
+                loadGeoJSON(file, '10m');
+            } else if (fileName.endsWith('.shp')) {
+                loadShapefile(file, '10m');
+            } else if (fileName.endsWith('.zip')) {
+                loadZipFile(file, '10m');
+            } else {
+                alert("不支持的文件格式");
+            }
+        });
+        
+        document.getElementById("resetBtn").addEventListener("click", function() {
+            projection.rotate([0, 0]).scale(width / 2.2);
+            rotation = [0, 0];
+            g.selectAll("path").attr("d", path);
+            svg.transition()
+                .duration(750)
+                .call(zoom.transform, d3.zoomIdentity);
+        });
+        
+        document.getElementById("toggleGraticule").addEventListener("click", function() {
+            showGraticule = !showGraticule;
+            graticulePath.style("display", showGraticule ? "block" : "none");
+        });
+        
+        document.getElementById("toggleRotation").addEventListener("click", function() {
+            isRotating = !isRotating;
+            updateRotationStatus();
+        });
+        
+        document.getElementById("clearConnections").addEventListener("click", function() {
+            clearConnections();
+            document.getElementById("info").textContent = "🗑️ 已清除所有连接线";
+        });
+        
+        function updateRotationStatus() {
+            const btn = document.getElementById("toggleRotation");
+            const status = document.getElementById("rotation-status");
+            if (isRotating) {
+                btn.textContent = "⏸️ 暂停旋转";
+                status.textContent = "自动旋转中...";
+            } else {
+                btn.textContent = "▶️ 开始旋转";
+                status.textContent = "旋转已暂停";
+            }
+        }
+        
+        window.addEventListener("resize", function() {
+            const newSize = Math.min(window.innerWidth, window.innerHeight - 100) * 0.9;
+            svg.attr("width", newSize).attr("height", newSize);
+            projection.scale(newSize / 2.2).translate([newSize / 2, newSize / 2]);
+            g.selectAll("path").attr("d", path);
+        });
+    </script>
+</body>
+</html>
