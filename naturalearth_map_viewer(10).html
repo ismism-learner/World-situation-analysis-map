@@ -1,47 +1,4 @@
-                    
-                    shapefile.open(arrayBuffer)
-                        .then(source => {
-                            const features = [];
-                            
-                            function readNext() {
-                                return source.read().then(result => {
-                                    if (result.done) {
-                                        return features;
-                                    }
-                                    features.push(result.value);
-                                    return readNext();
-                                });
-                            }
-                            
-                            return readNext();
-                        })
-                        .then(function(features) {
-                            console.log("从 ZIP 读取到", features.length, "个要素");
-                            const geojson = {
-                                type: "FeatureCollection",
-                                features: features
-                            };
-                            renderGeoJSON(geojson);
-                        })
-                        .catch(function(error) {
-                            console.error("ZIP 解析错误:", error);
-                            alert("ZIP 文件解析失败: " + error.message);
-                            document.getElementById("info").textContent = "❌ ZIP 加载失败";
-                        });
-                } catch (error) {
-                    console.error("读取 ZIP 错误:", error);
-                    alert("读取 ZIP 文件失败: " + error.message);
-                    document.getElementById("info").textContent = "❌ ZIP 读取失败";
-                }
-            };
-            
-            reader.onerror = function() {
-                alert("ZIP 文件读取错误");
-                document.getElementById("info").textContent = "❌ ZIP 读取错误";
-            };
-            
-            reader.readAsArrayBuffer(file);
-        }<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -1011,50 +968,6 @@
             reader.onerror = function() {
                 alert("地图包文件读取错误");
                 document.getElementById("info").textContent = "❌ 文件读取错误";
-            };
-            
-            reader.readAsArrayBuffer(file);
-        }
-                    
-                    shapefile.open(arrayBuffer)
-                        .then(source => {
-                            const features = [];
-                            
-                            function readNext() {
-                                return source.read().then(result => {
-                                    if (result.done) {
-                                        return features;
-                                    }
-                                    features.push(result.value);
-                                    return readNext();
-                                });
-                            }
-                            
-                            return readNext();
-                        })
-                        .then(function(features) {
-                            console.log("从 ZIP 读取到", features.length, "个要素");
-                            const geojson = {
-                                type: "FeatureCollection",
-                                features: features
-                            };
-                            renderGeoJSON(geojson);
-                        })
-                        .catch(function(error) {
-                            console.error("ZIP 解析错误:", error);
-                            alert("ZIP 文件解析失败: " + error.message);
-                            document.getElementById("info").textContent = "❌ ZIP 加载失败";
-                        });
-                } catch (error) {
-                    console.error("读取 ZIP 错误:", error);
-                    alert("读取 ZIP 文件失败: " + error.message);
-                    document.getElementById("info").textContent = "❌ ZIP 读取失败";
-                }
-            };
-            
-            reader.onerror = function() {
-                alert("ZIP 文件读取错误");
-                document.getElementById("info").textContent = "❌ ZIP 读取错误";
             };
             
             reader.readAsArrayBuffer(file);
