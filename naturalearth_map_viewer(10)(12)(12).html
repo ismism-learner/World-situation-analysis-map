@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 球形地球观察器</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/shapefile@0.6.6/dist/shapefile.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a14 100%);
+            color: #eee;
+            overflow: hidden;
+        }
+        
+        #container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        #header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: linear-gradient(135deg, #16213e 0%, #0f1926 100%);
+            padding: 15px 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 10;
+            backdrop-filter: blur(10px);
+            transform: translateY(-80%);
+            transition: transform 0.3s ease-in-out;
+        }
+
+        #header.header-expanded,
+        #header:hover {
+            transform: translateY(0);
+        }
+        
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #00d4ff 0%, #0099ff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: bold;
+        }
+        
+        #controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+        
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: -9999px;
+        }
+        
+        .file-input-label {
+            background: linear-gradient(135deg, #00d4ff 0%, #0099ff 100%);
+            color: #0a0a14;
+            padding: 10px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+        }
+        
+        .file-input-label:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 212, 255, 0.5);
+        }
+        
+        button {
+            background: rgba(15, 52, 96, 0.8);
+            color: #00d4ff;
+            border: 2px solid #00d4ff;
+            padding: 8px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            backdrop-filter: blur(10px);
+        }
+        
+        button:hover {
+            background: rgba(0, 212, 255, 0.2);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+        }
+        
+        #info {
+            color: #88ddff;
+            font-size: 13px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        #map-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        #globe-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .sphere {
+            fill: url(#ocean-gradient);
+        }
+        
+        .country {
+            fill: #1e3a5f;
+            stroke: #00d4ff;
+            stroke-width: 0.5;
+            transition: all 0.3s;
+        }
+        
+        .country:hover {
+            fill: #2d5a8f;
+            stroke: #00ffff;
+            stroke-width: 1.5;
+            filter: drop-shadow(0 0 10px rgba(0, 255, 255, 0.8));
+            cursor: pointer;
+        }
+        
+        .country.selected {
+            fill: #ff6b35;
+            stroke: #ffaa00;
+            stroke-width: 2;
+        }
+        
+        .connection-arc {
+            fill: none;
+            stroke: #00ffff;
+            opacity: 0.6;
+            filter: drop-shadow(0 0 8px rgba(0, 255, 255, 0.8));
+            pointer-events: none;
+        }
+        
+        .connection-point {
+            fill: #ff6b35;
+            stroke: #ffaa00;
+            stroke-width: 2;
+            filter: drop-shadow(0 0 10px rgba(255, 107, 53, 0.8));
+        }
+        
+        .graticule {
+            fill: none;
+            stroke: rgba(0, 212, 255, 0.2);
+            stroke-width: 0.5;
+        }
+
+        .text-label {
+            fill: #ffd700;
+            font-size: 12px;
+            font-weight: bold;
+            text-anchor: middle;
+            pointer-events: none;
+            text-shadow: 0 0 5px #000;
+        }
+
+        .switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #334; transition: .4s; border-radius: 20px; }
+        .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #00d4ff; }
+        input:checked + .slider:before { transform: translateX(20px); }
+        
+        #tooltip {
+            position: absolute;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.95) 0%, rgba(0, 150, 255, 0.95) 100%);
+            color: #0a0a14;
+            padding: 10px 16px;
+            border-radius: 8px;
+            pointer-events: none;
+            display: none;
+            font-size: 14px;
+            font-weight: bold;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        #legend {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            background: rgba(22, 33, 62, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid #00d4ff;
+            font-size: 13px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+        
+        .legend-title {
+            font-weight: bold;
+            margin-bottom: 12px;
+            color: #00d4ff;
+            font-size: 15px;
+            text-shadow: 0 2px 4px rgba(0, 212, 255, 0.5);
+        }
+        
+        .legend-item {
+            margin: 8px 0;
+            color: #88ddff;
+        }
+        
+        #rotation-info {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            background: rgba(22, 33, 62, 0.85);
+            padding: 15px 20px;
+            border-radius: 12px;
+            border: 2px solid #00d4ff;
+            font-size: 12px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            color: #88ddff;
+            font-family: 'Courier New', monospace;
+        }
+        
+        #debug-info {
+            position: absolute;
+            top: 120px;
+            right: 30px;
+            background: rgba(22, 33, 62, 0.85);
+            padding: 15px 20px;
+            border-radius: 12px;
+            border: 2px solid #ff8800;
+            font-size: 11px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            color: #ffaa44;
+            font-family: 'Courier New', monospace;
+            max-width: 300px;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff88;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        @keyframes rotate {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="header">
+            <h1>🌍 3D 球形地球观察器</h1>
+            <div id="controls">
+                <div class="file-input-wrapper">
+                    <label for="fileInput" class="file-input-label">🗺️ 加载地图 (1:110m)</label>
+                    <input type="file" id="fileInput" accept=".geojson,.json,.shp,.zip" />
+                </div>
+                <button id="resetBtn">🔄 重置视图</button>
+                <button id="toggleGraticule">🌐 切换经纬网</button>
+                <button id="toggleRotation">▶️ 开始旋转</button>
+                <button id="clearConnections">🗑️ 清除连接线</button>
+                <div style="display: flex; align-items: center; gap: 10px; color: #88ddff;">
+                    <label for="lineWidthSlider">线宽:</label>
+                    <input type="range" id="lineWidthSlider" min="1" max="20" value="2.5" step="0.5" style="cursor: pointer;">
+                    <span id="lineWidthValue">2.5px</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px; color: #88ddff;">
+                    <label for="connectionDate">日期:</label>
+                    <input type="date" id="connectionDate" style="background: rgba(15, 52, 96, 0.8); color: #00d4ff; border: 1px solid #00d4ff; border-radius: 4px; padding: 5px;">
+                </div>
+                <div id="arc-controls" style="display: flex; align-items: center; gap: 15px; background: rgba(10,20,40,0.7); padding: 8px 12px; border-radius: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <label class="switch">
+                            <input type="checkbox" id="arcModeToggle">
+                            <span class="slider round"></span>
+                        </label>
+                        <span>抛物线模式</span>
+                    </div>
+                    <div id="arc-height-control" style="display: none; align-items: center; gap: 8px;">
+                        <label for="arcHeightSlider">高度:</label>
+                        <input type="range" id="arcHeightSlider" min="0" max="1" value="0.2" step="0.01" style="cursor: pointer;">
+                        <span id="arcHeightValue">0.2</span>
+                    </div>
+                </div>
+                <div id="location-search-controls" style="display: flex; align-items: center; gap: 10px; background: rgba(10,20,40,0.7); padding: 8px 12px; border-radius: 8px;">
+                    <div class="file-input-wrapper">
+                        <label for="dbInput" class="file-input-label" style="font-size: 12px; padding: 6px 12px;">加载地理数据库</label>
+                        <input type="file" id="dbInput" accept=".json" />
+                    </div>
+                    <input type="text" id="locationSearch" placeholder="搜索城市/省份..." style="background: rgba(15, 52, 96, 0.8); color: #00d4ff; border: 1px solid #00d4ff; border-radius: 4px; padding: 5px;">
+                    <button id="searchBtn">🔍 定位</button>
+                </div>
+                <span id="info">请加载地图包或单独加载各级别地图</span>
+            </div>
+        </div>
+        
+        <div id="map-container">
+            <div id="globe-container">
+                <svg id="globe"></svg>
+            </div>
+            <div id="tooltip"></div>
+            <div id="legend">
+                <div class="legend-title">🎮 操作说明</div>
+                <div class="legend-item">🖱️ 拖拽: 旋转地球（任意方向）</div>
+                <div class="legend-item">🖱️ 滚轮: 缩放视图</div>
+                <div class="legend-item">🖱️ 悬停: 查看国家</div>
+                <div class="legend-item">👆 点击: 选择两个地点连线</div>
+                <div class="legend-item">⏸️ 按钮: 控制自动旋转</div>
+            </div>
+            <div id="rotation-info">
+                <span class="status-indicator"></span>
+                <span id="rotation-status">旋转已暂停</span>
+            </div>
+            <div id="debug-info">
+                <div><strong>🔍 调试信息</strong></div>
+                <div>经度: <span id="debug-lon">0°</span></div>
+                <div>纬度: <span id="debug-lat">0°</span></div>
+                <div>缩放: <span id="debug-zoom">1.0x</span></div>
+                <div>当前地图: <span id="debug-lod">未加载</span></div>
+                <div>可见国家: <span id="debug-visible">0</span></div>
+                <div>总国家数: <span id="debug-total">0</span></div>
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ffaa44;">
+                    <strong>📍 连接线模式</strong><br>
+                    <span id="connection-mode">待选择起点</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const svg = d3.select("#globe");
+        const globeContainer = document.getElementById('globe-container');
+        let width, height, initialScale;
+
+        // 创建渐变
+        const defs = svg.append("defs");
+        const oceanGradient = defs.append("radialGradient")
+            .attr("id", "ocean-gradient");
+        oceanGradient.append("stop")
+            .attr("offset", "0%")
+            .attr("stop-color", "#1a3d5c");
+        oceanGradient.append("stop")
+            .attr("offset", "100%")
+            .attr("stop-color", "#0a1929");
+        
+        const projection = d3.geoOrthographic()
+            .rotate([0, 0, 0])
+            .clipAngle(90);
+        
+        const path = d3.geoPath().projection(projection);
+        const graticule = d3.geoGraticule();
+        
+        // 绘制球体
+        svg.append("path")
+            .datum({type: "Sphere"})
+            .attr("class", "sphere")
+            .attr("d", path);
+        
+        const g = svg.append("g");
+        const connectionsGroup = svg.append("g").attr("class", "connections");
+        const selectionGroup = svg.append("g").attr("class", "selection-points");
+        
+        // 绘制经纬网
+        let graticulePath = g.append("path")
+            .datum(graticule)
+            .attr("class", "graticule")
+            .attr("d", path);
+        
+        let showGraticule = true;
+        let isRotating = false;
+        let rotation = [0, 0];
+        
+        let currentGeoJSON = null;
+        let selectedPoints = [];
+        let connections = [];
+        let locationDB = [];
+        
+        // 渲染当前地图
+        function renderCurrentMap() {
+            if (!currentGeoJSON) return;
+            
+            g.selectAll(".country").remove();
+            
+            g.selectAll(".country")
+                .data(currentGeoJSON.features)
+                .enter()
+                .append("path")
+                .attr("class", "country")
+                .attr("d", path)
+                .on("click", function(event, d) {
+                    event.stopPropagation();
+                    const centroid = d3.geoCentroid(d);
+                    const name = d.properties.NAME || d.properties.name || 
+                               d.properties.ADMIN || d.properties.admin || "未知";
+
+                    if (selectedPoints.length === 0) {
+                        selectedPoints.push(centroid);
+                        d3.select(this).classed("selected", true);
+                        updateConnectionMode();
+                        document.getElementById("info").textContent = `✅ 已选择起点: ${name}`;
+                        
+                        // Immediately draw the first selection point
+                        selectionGroup.append("circle")
+                            .attr("class", "connection-point selection-point")
+                            .attr("cx", projection(centroid)[0])
+                            .attr("cy", projection(centroid)[1])
+                            .attr("r", 5);
+
+                    } else if (selectedPoints.length === 1) {
+                        selectedPoints.push(centroid);
+                        document.getElementById("info").textContent = `✅ 已创建连接线到: ${name}`;
+                        
+                        // Clear temporary selection point
+                        selectionGroup.selectAll("*").remove();
+                        
+                        drawConnection(selectedPoints[0], selectedPoints[1]);
+                        
+                        selectedPoints = [];
+                        g.selectAll(".country").classed("selected", false);
+                        updateConnectionMode();
+                    }
+                })
+                .on("mouseover", function(event, d) {
+                    const name = d.properties.NAME || d.properties.name || 
+                               d.properties.ADMIN || d.properties.admin || 
+                               d.properties.NAME_LONG || d.properties.NAME_EN || 
+                               d.properties.COUNTRY || "未知";
+                    tooltip
+                        .style("display", "block")
+                        .html(name);
+                })
+                .on("mousemove", function(event) {
+                    tooltip
+                        .style("left", (event.pageX + 15) + "px")
+                        .style("top", (event.pageY - 10) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.style("display", "none");
+                });
+        }
+        
+        // 更新连接线状态显示
+        function updateConnectionMode() {
+            const modeText = document.getElementById('connection-mode');
+            if (selectedPoints.length === 0) {
+                modeText.textContent = '待选择起点';
+                modeText.style.color = '#ffaa44';
+            } else if (selectedPoints.length === 1) {
+                modeText.textContent = '已选起点，选择终点';
+                modeText.style.color = '#00ff88';
+            }
+        }
+        
+        // 绘制连接线
+        function drawConnection(point1, point2) {
+            const date = document.getElementById('connectionDate').value;
+            if (!date) {
+                alert("请先选择一个日期");
+                return;
+            }
+
+            // 使用 D3 的球面插值创建大圆弧
+            const interpolate = d3.geoInterpolate(point1, point2);
+            
+            // 生成弧线上的点
+            const points = [];
+            for (let i = 0; i <= 100; i++) {
+                points.push(interpolate(i / 100));
+            }
+            
+            // 创建 LineString
+            const arcLine = {
+                type: "LineString",
+                coordinates: points
+            };
+            
+            const currentLineWidth = document.getElementById("lineWidthSlider").value;
+
+            const connectionId = `conn-${Date.now()}`;
+            const connectionData = {
+                id: connectionId,
+                point1,
+                point2,
+                arcLine,
+                date,
+                text: ''
+            };
+
+            const connectionGroup = connectionsGroup.append("g")
+                .datum(connectionData)
+                .attr("class", "connection-group")
+                .attr("id", connectionId);
+
+            // 绘制弧线
+            connectionGroup.append("path")
+                .datum(d => d.arcLine)
+                .attr("class", "connection-arc")
+                .attr("d", path)
+                .style("stroke-width", `${currentLineWidth}px`)
+                .on('dblclick', function(event) {
+                    event.stopPropagation();
+                    const parentData = d3.select(this.parentNode).datum();
+                    const newText = prompt("请输入标签文本:", parentData.text);
+                    if (newText !== null) {
+                        parentData.text = newText;
+                        renderOrUpdateTextLabels();
+                    }
+                });
+            
+            // 绘制起点和终点标记
+            connectionGroup.append("circle")
+                .attr("class", "connection-point start-point")
+                .attr("r", 5);
+
+            connectionGroup.append("circle")
+                .attr("class", "connection-point end-point")
+                .attr("r", 5);
+            
+            // 保存连接
+            connections.push(connectionData);
+        }
+        
+        function generateArcPath(d) {
+            const arcMode = document.getElementById('arcModeToggle').checked;
+            if (!arcMode) {
+                return path(d.arcLine);
+            }
+
+            const arcHeight = +document.getElementById('arcHeightSlider').value;
+            const interpolate = d3.geoInterpolate(d.point1, d.point2);
+            const midPoint = interpolate(0.5);
+            const startPoint = projection(d.point1);
+            const endPoint = projection(d.point2);
+
+            if (!startPoint || !endPoint) return "M0,0";
+
+            const controlPoint = projection(midPoint);
+            const dist = Math.sqrt(Math.pow(endPoint[0] - startPoint[0], 2) + Math.pow(endPoint[1] - startPoint[1], 2));
+            
+            controlPoint[1] -= dist * arcHeight;
+
+            return `M${startPoint[0]},${startPoint[1]} Q${controlPoint[0]},${controlPoint[1]} ${endPoint[0]},${endPoint[1]}`;
+        }
+
+        // 更新所有连接线的位置
+        function updateConnections() {
+            const center = [-projection.rotate()[0], -projection.rotate()[1]];
+
+            connectionsGroup.selectAll('.connection-group')
+                .each(function(d) {
+                    const group = d3.select(this);
+                    const isVisible1 = d3.geoDistance(d.point1, center) < Math.PI / 2;
+                    const isVisible2 = d3.geoDistance(d.point2, center) < Math.PI / 2;
+                    const midPoint = d3.geoInterpolate(d.point1, d.point2)(0.5);
+                    const isMidVisible = d3.geoDistance(midPoint, center) < Math.PI / 2;
+
+                    group.style('display', isVisible1 || isVisible2 || isMidVisible ? 'block' : 'none');
+                    
+                    group.select('.connection-arc').attr('d', generateArcPath(d));
+
+                    const p1 = projection(d.point1);
+                    group.select('.start-point')
+                        .attr('cx', p1 ? p1[0] : -999)
+                        .attr('cy', p1 ? p1[1] : -999)
+                        .style('display', isVisible1 ? 'block' : 'none');
+
+                    const p2 = projection(d.point2);
+                    group.select('.end-point')
+                        .attr('cx', p2 ? p2[0] : -999)
+                        .attr('cy', p2 ? p2[1] : -999)
+                        .style('display', isVisible2 ? 'block' : 'none');
+                });
+            
+            renderOrUpdateTextLabels();
+            
+            // Update temporary selection point
+            if (selectedPoints.length === 1) {
+                const p = projection(selectedPoints[0]);
+                selectionGroup.select('.selection-point')
+                    .attr('cx', p[0])
+                    .attr('cy', p[1]);
+            }
+
+            // Also update the main country paths
+            g.selectAll(".country").attr("d", path);
+            graticulePath.attr("d", path);
+        }
+
+        function renderOrUpdateTextLabels() {
+            connectionsGroup.selectAll('.connection-group').each(function(d) {
+                const group = d3.select(this);
+                let label = group.select('.text-label');
+
+                if (d.text && label.empty()) {
+                    label = group.append('text').attr('class', 'text-label');
+                }
+
+                if (d.text) {
+                    const p1 = d.point1;
+                    const p2 = d.point2;
+                    const midPoint = d3.geoInterpolate(p1, p2)(0.5);
+                    const center = [-projection.rotate()[0], -projection.rotate()[1]];
+                    const isVisible = d3.geoDistance(midPoint, center) < Math.PI / 2;
+                    
+                    if (isVisible) {
+                        const pos = projection(midPoint);
+                        label.attr('transform', `translate(${pos[0]}, ${pos[1]})`)
+                             .text(d.text)
+                             .style('display', 'block');
+                    } else {
+                        label.style('display', 'none');
+                    }
+                } else if (!label.empty()) {
+                    label.remove();
+                }
+            });
+        }
+        
+        // 清除所有连接线
+        function clearConnections() {
+            connectionsGroup.selectAll("*").remove();
+            selectionGroup.selectAll("*").remove();
+            connections = [];
+            selectedPoints = [];
+            g.selectAll(".country").classed("selected", false);
+            updateConnectionMode();
+        }
+        
+        // 更新调试信息
+        function updateDebugInfo() {
+            const rotate = projection.rotate();
+            document.getElementById('debug-lon').textContent = rotate[0].toFixed(1) + '°';
+            document.getElementById('debug-lat').textContent = rotate[1].toFixed(1) + '°';
+            
+            if (initialScale) {
+                const scale = projection.scale() / initialScale;
+                document.getElementById('debug-zoom').textContent = scale.toFixed(2) + 'x';
+            }
+            
+            if (currentGeoJSON) {
+                const visible = g.selectAll('.country').nodes().filter(node => {
+                    const display = d3.select(node).style('display');
+                    const visibility = d3.select(node).style('visibility');
+                    return display !== 'none' && visibility !== 'hidden';
+                }).length;
+                
+                document.getElementById('debug-visible').textContent = visible;
+                document.getElementById('debug-total').textContent = currentGeoJSON.features.length;
+            }
+            
+            // 更新连接线位置
+            updateConnections();
+        }
+        
+        // 自动旋转
+        const rotationSpeed = 0.3;
+        let rotationTimer = d3.timer(function(elapsed) {
+            if (isRotating) {
+                rotation[0] = (rotation[0] + rotationSpeed) % 360;
+                projection.rotate(rotation);
+                svg.selectAll(".sphere, .country, .graticule").attr("d", path);
+                updateConnections(); // Specifically update connections
+                updateDebugInfo();
+            }
+        });
+        
+        // 拖拽旋转 - 恢复上下左右旋转
+        const drag = d3.drag()
+            .on("start", function(event) {
+                isRotating = false;
+                updateRotationStatus();
+            })
+            .on("drag", function(event) {
+                const rotate = projection.rotate();
+                const k = 75 / projection.scale();
+                // 恢复完整的旋转：左右和上下
+                projection.rotate([
+                    rotate[0] + event.dx * k,
+                    rotate[1] - event.dy * k  // 恢复纬度旋转
+                ]);
+                rotation = projection.rotate();
+                svg.selectAll(".sphere, .country, .graticule").attr("d", path);
+                updateDebugInfo();
+            });
+        
+        svg.call(drag);
+        
+        // 缩放
+        const zoom = d3.zoom()
+            .scaleExtent([0.5, 100])
+            .on("zoom", function(event) {
+                if (!initialScale) return;
+                projection.scale(initialScale * event.transform.k);
+                
+                svg.selectAll(".sphere, .country, .graticule").attr("d", path);
+                updateDebugInfo();
+            });
+        
+        svg.call(zoom);
+        
+        const tooltip = d3.select("#tooltip");
+        
+        function renderGeoJSON(geojson) {
+            console.log("渲染地图数据:", geojson);
+            
+            if (!geojson || !geojson.features || geojson.features.length === 0) {
+                alert("地图数据为空或格式不正确");
+                document.getElementById("info").textContent = "❌ 地图数据无效";
+                return;
+            }
+            
+            currentGeoJSON = geojson;
+            renderCurrentMap();
+            
+            console.log("已渲染", geojson.features.length, "个要素");
+            document.getElementById("info").textContent = 
+                `✅ 已加载地图 (${geojson.features.length} 个地理要素)`;
+            
+            // 初始化调试信息
+            updateDebugInfo();
+        }
+        
+        function loadGeoJSON(file) {
+            document.getElementById("info").textContent = `⏳ 正在加载 GeoJSON...`;
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const geojson = JSON.parse(e.target.result);
+                    console.log(`GeoJSON 解析成功:`, geojson);
+                    renderGeoJSON(geojson);
+                } catch (error) {
+                    console.error("GeoJSON 解析错误:", error);
+                    alert("GeoJSON 文件解析失败: " + error.message);
+                    document.getElementById("info").textContent = "❌ 加载失败";
+                }
+            };
+            
+            reader.onerror = function() {
+                alert("GeoJSON 文件读取错误");
+                document.getElementById("info").textContent = "❌ 文件读取错误";
+            };
+            
+            reader.readAsText(file);
+        }
+        
+        function loadShapefile(file) {
+            document.getElementById("info").textContent = `⏳ 正在加载 Shapefile...`;
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    const arrayBuffer = e.target.result;
+                    console.log(`开始解析 Shapefile, 大小:`, arrayBuffer.byteLength);
+                    
+                    if (typeof shapefile === 'undefined') {
+                        alert("Shapefile 库未加载，请刷新页面重试或使用 GeoJSON 格式");
+                        document.getElementById("info").textContent = "❌ Shapefile 库未加载";
+                        return;
+                    }
+                    
+                    shapefile.open(arrayBuffer)
+                        .then(source => {
+                            const features = [];
+                            
+                            function readNext() {
+                                return source.read().then(result => {
+                                    if (result.done) {
+                                        return features;
+                                    }
+                                    features.push(result.value);
+                                    return readNext();
+                                });
+                            }
+                            
+                            return readNext();
+                        })
+                        .then(function(features) {
+                            console.log(`读取到`, features.length, "个要素");
+                            const geojson = {
+                                type: "FeatureCollection",
+                                features: features
+                            };
+                            renderGeoJSON(geojson);
+                        })
+                        .catch(function(error) {
+                            console.error("Shapefile 解析错误:", error);
+                            alert("Shapefile 解析失败: " + error.message);
+                            document.getElementById("info").textContent = "❌ Shapefile 加载失败";
+                        });
+                } catch (error) {
+                    console.error("读取文件错误:", error);
+                    alert("读取文件失败: " + error.message);
+                    document.getElementById("info").textContent = "❌ 文件读取失败";
+                }
+            };
+            
+            reader.onerror = function() {
+                alert("文件读取错误");
+                document.getElementById("info").textContent = "❌ 文件读取错误";
+            };
+            
+            reader.readAsArrayBuffer(file);
+        }
+        
+        function parseAndLoadShapefile(zipBuffer, filenameHint) {
+            return shapefile.open(zipBuffer)
+                .then(source => {
+                    const features = [];
+                    function readNext() {
+                        return source.read().then(result => {
+                            if (result.done) return features;
+                            features.push(result.value);
+                            return readNext();
+                        });
+                    }
+                    return readNext();
+                })
+                .then(features => {
+                    const geojson = { type: "FeatureCollection", features: features };
+                    renderGeoJSON(geojson);
+                })
+                .catch(error => {
+                    console.error(`加载地图 (${filenameHint}) 失败:`, error);
+                    alert(`加载地图 (${filenameHint}) 失败: ${error.message}`);
+                });
+        }
+
+        function loadZipFile(file) {
+            document.getElementById("info").textContent = `⏳ 正在加载 ZIP 文件...`;
+            const reader = new FileReader();
+            reader.onload = (e) => parseAndLoadShapefile(e.target.result, file.name);
+            reader.onerror = () => {
+                alert("文件读取错误");
+                document.getElementById("info").textContent = "❌ 文件读取错误";
+            };
+            reader.readAsArrayBuffer(file);
+        }
+        
+        document.getElementById("fileInput").addEventListener("change", function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            const fileName = file.name.toLowerCase();
+            
+            if (fileName.endsWith('.geojson') || fileName.endsWith('.json')) {
+                loadGeoJSON(file);
+            } else if (fileName.endsWith('.shp')) {
+                loadShapefile(file);
+            } else if (fileName.endsWith('.zip')) {
+                loadZipFile(file);
+            } else {
+                alert("不支持的文件格式");
+            }
+        });
+        
+        document.getElementById("resetBtn").addEventListener("click", function() {
+            svg.transition()
+                .duration(750)
+                .call(zoom.transform, d3.zoomIdentity);
+        });
+        
+        document.getElementById("toggleGraticule").addEventListener("click", function() {
+            showGraticule = !showGraticule;
+            graticulePath.style("display", showGraticule ? "block" : "none");
+        });
+        
+        document.getElementById("toggleRotation").addEventListener("click", function() {
+            isRotating = !isRotating;
+            updateRotationStatus();
+        });
+        
+        document.getElementById("clearConnections").addEventListener("click", function() {
+            clearConnections();
+            document.getElementById("info").textContent = "🗑️ 已清除所有连接线";
+        });
+        
+        const lineWidthSlider = document.getElementById("lineWidthSlider");
+        const lineWidthValue = document.getElementById("lineWidthValue");
+
+        lineWidthSlider.addEventListener("input", function() {
+            const newWidth = this.value;
+            lineWidthValue.textContent = `${newWidth}px`;
+            connectionsGroup.selectAll(".connection-arc").style("stroke-width", `${newWidth}px`);
+        });
+
+        document.getElementById('connectionDate').addEventListener('change', function() {
+            // When date changes, clear any pending selections
+            if (selectedPoints.length > 0) {
+                selectedPoints = [];
+                g.selectAll(".country").classed("selected", false);
+                updateConnectionMode();
+                document.getElementById("info").textContent = "日期已更改，请重新选择起点。";
+            }
+            filterConnectionsByDate(this.value);
+        });
+
+        document.getElementById('arcModeToggle').addEventListener('change', function() {
+            const arcHeightControl = document.getElementById('arc-height-control');
+            arcHeightControl.style.display = this.checked ? 'flex' : 'none';
+            updateConnections();
+        });
+
+        document.getElementById('arcHeightSlider').addEventListener('input', function() {
+            document.getElementById('arcHeightValue').textContent = this.value;
+            updateConnections();
+        });
+
+        document.getElementById('dbInput').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    locationDB = JSON.parse(e.target.result);
+                    document.getElementById('info').textContent = `✅ 地理数据库已加载 (${locationDB.length} 个国家).`;
+                    alert("地理数据库加载成功！");
+                } catch (error) {
+                    alert("数据库文件解析失败: " + error.message);
+                }
+            };
+            reader.readAsText(file);
+        });
+
+        document.getElementById('searchBtn').addEventListener('click', function() {
+            const query = document.getElementById('locationSearch').value.trim();
+            if (!query) return;
+            if (locationDB.length === 0) {
+                alert("请先加载地理数据库。");
+                return;
+            }
+            searchLocation(query);
+        });
+
+        function filterConnectionsByDate(selectedDate) {
+            connectionsGroup.selectAll('.connection-group')
+                .style('display', d => (d.date === selectedDate) ? 'block' : 'none');
+        }
+
+        function normalizeName(name) {
+            return name.toLowerCase()
+                .replace(/sheng|province|autonomous region|special administrative region/g, '')
+                .trim();
+        }
+
+        function searchLocation(query) {
+            const normalizedQuery = normalizeName(query);
+            let found = null;
+
+            // Search for countries
+            for (const country of locationDB) {
+                if (normalizeName(country.name).includes(normalizedQuery)) {
+                    found = { ...country, level: 'country' };
+                    break;
+                }
+            }
+
+            // Search for states if no country found
+            if (!found) {
+                for (const country of locationDB) {
+                    for (const state of country.states) {
+                        if (normalizeName(state.name).includes(normalizedQuery)) {
+                            found = { ...state, level: 'state' };
+                            break;
+                        }
+                    }
+                    if (found) break;
+                }
+            }
+
+            // Search for cities if still not found
+            if (!found) {
+                for (const country of locationDB) {
+                    for (const state of country.states) {
+                        for (const city of state.cities) {
+                            if (normalizeName(city.name).includes(normalizedQuery)) {
+                                found = { ...city, level: 'city' };
+                                break;
+                            }
+                        }
+                        if (found) break;
+                    }
+                    if (found) break;
+                }
+            }
+
+            if (found) {
+                g.selectAll(".country").classed("selected", false);
+                
+                const targetRotation = [-found.lon, -found.lat];
+                const targetScale = d3.zoomIdentity.translate(width / 2, height / 2).scale(
+                    found.level === 'country' ? 2.5 : (found.level === 'state' ? 5 : 10)
+                );
+
+                svg.transition()
+                    .duration(1250)
+                    .call(zoom.transform, targetScale)
+                    .tween("rotate", function() {
+                        const r = d3.interpolate(projection.rotate(), targetRotation);
+                        return function(t) {
+                            projection.rotate(r(t));
+                            updateConnections();
+                        };
+                    })
+                    .on("end", () => {
+                        // Highlight the corresponding feature
+                        const normalizedFoundName = normalizeName(found.name);
+                        let highlighted = g.selectAll(".country")
+                            .filter(function(d) {
+                                const featureName = d.properties.NAME || d.properties.name || 
+                                                    d.properties.ADMIN || d.properties.admin || "";
+                                return normalizeName(featureName).includes(normalizedFoundName);
+                            });
+                        
+                        if (highlighted.empty() && mapLOD['110m']) {
+                            const layerToSearch = d3.select(document.createElement("g"));
+                            layerToSearch.selectAll(".country")
+                                .data(mapLOD['110m'].features)
+                                .enter()
+                                .append("path")
+                                .attr("class", "country");
+                            
+                            highlighted = layerToSearch.selectAll(".country")
+                                .filter(function(d) {
+                                    const featureName = d.properties.NAME || d.properties.name || 
+                                                        d.properties.ADMIN || d.properties.admin || "";
+                                    return normalizeName(featureName).includes(normalizedFoundName);
+                                });
+                        }
+
+                        if (!highlighted.empty()) {
+                            g.selectAll(".country")
+                                .filter(function(d) {
+                                    const featureName = d.properties.NAME || d.properties.name || 
+                                                        d.properties.ADMIN || d.properties.admin || "";
+                                    return normalizeName(featureName).includes(normalizedFoundName);
+                                })
+                                .classed("selected", true);
+                            document.getElementById('info').textContent = `✅ 已定位并高亮: ${found.name}`;
+                        } else {
+                            document.getElementById('info').textContent = `ℹ️ 已定位到 ${found.name}，但在当前地图未找到边界。`;
+                        }
+                    });
+
+            } else {
+                alert("未找到指定位置。");
+            }
+        }
+        
+        function updateRotationStatus() {
+            const btn = document.getElementById("toggleRotation");
+            const status = document.getElementById("rotation-status");
+            if (isRotating) {
+                btn.textContent = "⏸️ 暂停旋转";
+                status.textContent = "自动旋转中...";
+            } else {
+                btn.textContent = "▶️ 开始旋转";
+                status.textContent = "旋转已暂停";
+            }
+        }
+        
+        // Initial call to set button text correctly
+        updateRotationStatus();
+        
+        function handleResize() {
+            width = globeContainer.clientWidth;
+            height = globeContainer.clientHeight;
+            
+            svg.attr('width', width).attr('height', height);
+            
+            initialScale = Math.min(width, height) / 2.2;
+            
+            const currentZoom = d3.zoomTransform(svg.node());
+            
+            projection
+                .scale(initialScale * currentZoom.k)
+                .translate([width / 2, height / 2]);
+
+            svg.selectAll(".sphere, .country, .graticule").attr("d", path);
+            updateConnections();
+        }
+
+        window.addEventListener('resize', handleResize);
+        handleResize(); // Initial call
+
+        // Set default date to today
+        document.getElementById('connectionDate').valueAsDate = new Date();
+    </script>
+</body>
+</html>
