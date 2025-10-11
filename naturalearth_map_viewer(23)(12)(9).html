@@ -307,6 +307,8 @@
         .layer-status {
             font-size: 10px;
             color: #ff8800;
+            min-width: 80px;
+            text-align: right;
         }
         
         .layer-status.loaded {
@@ -652,8 +654,12 @@
             <h1>🌍 3D 球形地球观察器 - 完整功能版</h1>
             <div id="controls">
                 <div class="file-input-wrapper">
-                    <label for="shapefilesInput" class="file-input-label">📁 加载 Shapefiles (可多选)</label>
-                    <input type="file" id="shapefilesInput" accept=".shp,.dbf,.shx,.prj" multiple />
+                    <label for="shapefilesInput110m" class="file-input-label" style="font-size: 12px; padding: 8px 16px;">📁 加载 1:110m 地图</label>
+                    <input type="file" id="shapefilesInput110m" accept=".shp,.dbf,.shx,.prj" multiple />
+                </div>
+                <div class="file-input-wrapper">
+                    <label for="shapefilesInput10m" class="file-input-label" style="font-size: 12px; padding: 8px 16px;">📁 加载 1:10m 高精度地图</label>
+                    <input type="file" id="shapefilesInput10m" accept=".shp,.dbf,.shx,.prj" multiple />
                 </div>
                 <button id="resetBtn">🔄 重置视图</button>
                 <button id="toggleGraticule">🌐 切换经纬网</button>
@@ -712,17 +718,8 @@
                     <div class="layer-item">
                         <input type="checkbox" class="layer-checkbox" id="layer-countries" data-layer="countries">
                         <label class="layer-label" for="layer-countries">Countries (主要国家)</label>
-                        <span class="layer-status" id="status-countries">未加载</span>
-                    </div>
-                    <div class="layer-item">
-                        <input type="checkbox" class="layer-checkbox" id="layer-countries-no-lakes" data-layer="countries-no-lakes">
-                        <label class="layer-label" for="layer-countries-no-lakes">Countries (无边界湖)</label>
-                        <span class="layer-status" id="status-countries-no-lakes">未加载</span>
-                    </div>
-                    <div class="layer-item">
-                        <input type="checkbox" class="layer-checkbox" id="layer-sovereignty" data-layer="sovereignty">
-                        <label class="layer-label" for="layer-sovereignty">Sovereignty (主权国)</label>
-                        <span class="layer-status" id="status-sovereignty">未加载</span>
+                        <span class="layer-status" id="status-countries-110m">110m: 未加载</span>
+                        <span class="layer-status" id="status-countries-10m">10m: 未加载</span>
                     </div>
                 </div>
                 
@@ -731,7 +728,8 @@
                     <div class="layer-item">
                         <input type="checkbox" class="layer-checkbox" id="layer-states" data-layer="states">
                         <label class="layer-label" for="layer-states">States & Provinces</label>
-                        <span class="layer-status" id="status-states">未加载</span>
+                        <span class="layer-status" id="status-states-110m">110m: 未加载</span>
+                        <span class="layer-status" id="status-states-10m">10m: 未加载</span>
                     </div>
                 </div>
                 
@@ -740,7 +738,8 @@
                     <div class="layer-item">
                         <input type="checkbox" class="layer-checkbox" id="layer-cities" data-layer="cities">
                         <label class="layer-label" for="layer-cities">Populated Places</label>
-                        <span class="layer-status" id="status-cities">未加载</span>
+                        <span class="layer-status" id="status-cities-110m">110m: 未加载</span>
+                        <span class="layer-status" id="status-cities-10m">10m: 未加载</span>
                     </div>
                 </div>
                 
@@ -767,6 +766,16 @@
                             <span id="lineWidthValue">2.5px</span>
                         </div>
                         <input type="range" class="slider-input" id="lineWidthSlider" min="1" max="20" value="2.5" step="0.5">
+                    </div>
+                </div>
+                <div class="control-section">
+                    <div class="category-header">⚙️ 视图设置</div>
+                    <div class="control-item slider-control">
+                        <div class="slider-label">
+                            <span>缩放</span>
+                            <span id="zoomValue">1.0x</span>
+                        </div>
+                        <input type="range" class="slider-input" id="zoomSlider" min="0.5" max="20" value="1" step="0.1">
                     </div>
                 </div>
                 
@@ -860,14 +869,28 @@
         let useParabolicArcs = false;
         let citiesDatabase = null;
         let currentBoundary = null;
+        let currentResolution = '110m';
+        const lodThreshold = 8; // Increased from 4
+        let lastDrawTime = 0;
+
+        function throttle(func, limit) {
+            let inThrottle;
+            return function() {
+                const args = arguments;
+                const context = this;
+                if (!inThrottle) {
+                    func.apply(context, args);
+                    inThrottle = true;
+                    setTimeout(() => inThrottle = false, limit);
+                }
+            }
+        }
         
         // 图层数据存储
         const layers = {
-            'countries': { data: null, group: null, visible: false, type: 'polygon', pattern: /admin_0_countries(?!.*lakes)\.shp$/i },
-            'countries-no-lakes': { data: null, group: null, visible: false, type: 'polygon', pattern: /admin_0_countries.*lakes\.shp$/i },
-            'sovereignty': { data: null, group: null, visible: false, type: 'polygon', pattern: /admin_0_sovereignty\.shp$/i },
-            'states': { data: null, group: null, visible: false, type: 'polygon', pattern: /admin_1_states_provinces(?!.*lakes)(?!.*lines)\.shp$/i },
-            'cities': { data: null, group: null, visible: false, type: 'point', pattern: /populated_places(?!.*simple)\.shp$/i }
+            'countries': { data: { '110m': null, '10m': null }, group: null, visible: false, type: 'polygon', pattern: /admin_0_(countries|sovereignty)/i },
+            'states': { data: { '110m': null, '10m': null }, group: null, visible: false, type: 'polygon', pattern: /admin_1_states_provinces/i },
+            'cities': { data: { '110m': null, '10m': null }, group: null, visible: false, type: 'point', pattern: /populated_places/i }
         };
         
         // 初始化图层组
@@ -878,7 +901,7 @@
         });
         
         // 加载多个 Shapefile 文件
-        function loadMultipleShapefiles(files) {
+        function loadShapefiles(files, resolution) {
             if (!files || files.length === 0) return;
             
             const fileGroups = {};
@@ -907,19 +930,19 @@
                 totalGroups++;
                 
                 let matchedLayerId = null;
-                for (const layerId in layers) {
-                    if (layers[layerId].pattern && layers[layerId].pattern.test(group.shp.name)) {
-                        matchedLayerId = layerId;
-                        break;
-                    }
-                }
+                const fileName = group.shp.name.toLowerCase();
                 
+                if (layers.countries.pattern.test(fileName)) matchedLayerId = 'countries';
+                else if (layers.states.pattern.test(fileName)) matchedLayerId = 'states';
+                else if (layers.cities.pattern.test(fileName)) matchedLayerId = 'cities';
+
                 if (!matchedLayerId) {
+                    console.warn(`No matching layer for ${fileName}`);
                     totalGroups--;
                     return;
                 }
                 
-                if (matchedLayerId === 'countries') hasCountryLayer = true;
+                if (matchedLayerId === 'countries' && resolution === '110m') hasCountryLayer = true;
                 
                 const shpPromise = new Promise((resolve, reject) => {
                     const reader = new FileReader();
@@ -953,11 +976,11 @@
                     return readNext();
                 }).then(features => {
                     const geojson = { type: "FeatureCollection", features: features };
-                    processLayerData(matchedLayerId, geojson);
+                    processLayerData(matchedLayerId, geojson, resolution);
                     loadedCount++;
                     
                     document.getElementById("info").textContent = 
-                        `✅ 已加载 ${loadedCount}/${totalGroups} 个图层 (${matchedLayerId}: ${features.length} 要素)`;
+                        `✅ 已加载 ${resolution} resolution ${loadedCount}/${totalGroups} 个图层 (${matchedLayerId}: ${features.length} 要素)`;
                     
                     if (loadedCount === totalGroups && hasCountryLayer) {
                         setTimeout(() => {
@@ -975,70 +998,108 @@
             });
         }
         
-        function processLayerData(layerId, geojson) {
-            layers[layerId].data = geojson;
-            document.getElementById(`status-${layerId}`).textContent = `✓ ${geojson.features.length}`;
-            document.getElementById(`status-${layerId}`).classList.add('loaded');
-            renderLayer(layerId);
+        function processLayerData(layerId, geojson, resolution) {
+            geojson.features.forEach((f, i) => {
+                f.id = `${layerId}-${resolution}-${i}`;
+            });
+            layers[layerId].data[resolution] = geojson;
+            const statusEl = document.getElementById(`status-${layerId}-${resolution}`);
+            if (statusEl) {
+                statusEl.textContent = `${resolution}: ✓ ${geojson.features.length}`;
+                statusEl.classList.add('loaded');
+            }
+            console.log(`Loaded ${layerId} (${resolution}) with ${geojson.features.length} features.`);
+            scheduleUpdate();
         }
         
-        function renderLayer(layerId) {
+        function renderLayer(layerId, resolution) {
             const layer = layers[layerId];
-            if (!layer.data) return;
             
-            layer.group.selectAll("*").remove();
-            
+            // Clear the other resolution's data from the DOM
+            const otherResolution = resolution === '110m' ? '10m' : '110m';
+            if (layers[layerId].data[otherResolution]) {
+                // By joining with an empty array, all existing elements are moved to the exit selection.
+                layer.group.selectAll("path").data([], d => d.id).exit().remove();
+                layer.group.selectAll("circle").data([], d => d.id).exit().remove();
+            }
+
+            let data = layer.data[resolution];
+
+            if (!data) {
+                resolution = '110m';
+                data = layer.data[resolution];
+            }
+            if (!data) {
+                layer.group.selectAll("*").remove();
+                return;
+            }
+
+            let features = data.features;
+            const featureIdentifier = d => d.id;
+
+            if (resolution === '10m') {
+                const center = projection.invert([width / 2, height / 2]);
+                const visibleAngle = Math.PI / 2 * 1.2; // 90 degrees + 20% buffer
+
+                features = features.filter(f => {
+                    const centroid = d3.geoCentroid(f);
+                    return d3.geoDistance(centroid, center) < visibleAngle;
+                });
+            }
+
             if (layer.type === 'polygon') {
-                layer.group.selectAll("path")
-                    .data(layer.data.features)
-                    .enter()
+                const paths = layer.group.selectAll("path")
+                    .data(features, featureIdentifier);
+
+                paths.exit().remove();
+
+                paths.enter()
                     .append("path")
                     .attr("class", "layer-country")
-                    .attr("d", path)
                     .on("click", function(event, d) {
                         if (pinMode) return;
                         event.stopPropagation();
                         const centroid = d3.geoCentroid(d);
                         handleFeatureClick(centroid, d);
                     })
-                    .on("mouseover", function(event, d) {
-                        showTooltip(event, d);
-                    })
-                    .on("mousemove", function(event) {
-                        moveTooltip(event);
-                    })
-                    .on("mouseout", function() {
-                        hideTooltip();
-                    });
+                    .on("mouseover", function(event, d) { showTooltip(event, d); })
+                    .on("mousemove", moveTooltip)
+                    .on("mouseout", hideTooltip)
+                    .merge(paths) // Merge enter and update selections
+                    .attr("d", path);
+
             } else if (layer.type === 'point') {
-                layer.group.selectAll("circle")
-                    .data(layer.data.features)
-                    .enter()
+                const circles = layer.group.selectAll("circle")
+                    .data(features, featureIdentifier);
+
+                circles.exit().remove();
+
+                circles.enter()
                     .append("circle")
                     .attr("class", "layer-city")
                     .attr("r", d => {
                         const pop = d.properties.POP_MAX || d.properties.pop_max || 0;
-                        return Math.max(2, Math.min(8, Math.log(pop) / 2));
+                        return Math.max(1, Math.log(pop) / 3);
                     })
-                    .attr("transform", d => {
-                        const coords = d.geometry.coordinates;
-                        const projected = projection(coords);
-                        return projected ? `translate(${projected[0]},${projected[1]})` : null;
-                    })
-                    .on("mouseover", function(event, d) {
-                        showTooltip(event, d);
-                    })
-                    .on("mousemove", function(event) {
-                        moveTooltip(event);
-                    })
-                    .on("mouseout", function() {
-                        hideTooltip();
-                    })
+                    .on("mouseover", function(event, d) { showTooltip(event, d); })
+                    .on("mousemove", moveTooltip)
+                    .on("mouseout", hideTooltip)
                     .on("click", function(event, d) {
                         if (pinMode) return;
                         event.stopPropagation();
                         const coords = d.geometry.coordinates;
                         handleFeatureClick(coords, d);
+                    })
+                    .merge(circles) // Merge enter and update selections
+                    .attr("transform", d => {
+                        const coords = d.geometry.coordinates;
+                        const projected = projection(coords);
+                        return projected ? `translate(${projected[0]},${projected[1]})` : null;
+                    })
+                    .style("display", d => {
+                        const coords = d.geometry.coordinates;
+                        const center = projection.invert([width / 2, height / 2]);
+                        return d3.geoDistance(coords, center) < Math.PI / 2 ? "block" : "none";
                     });
             }
         }
@@ -1197,14 +1258,17 @@
             layers[layerId].visible = visible;
             layers[layerId].group.style("display", visible ? "block" : "none");
             
-            if (visible && !layers[layerId].data) {
-                document.getElementById("info").textContent = `⚠️ 请先加载 ${layerId} 数据`;
+            if (visible) {
+                if (!layers[layerId].data['110m']) {
+                    document.getElementById("info").textContent = `⚠️ 请先加载 ${layerId} 的 110m 数据`;
+                }
+                renderLayer(layerId, currentResolution);
             }
         }
         
         function updateAllLayers() {
             Object.keys(layers).forEach(layerId => {
-                if (layers[layerId].visible && layers[layerId].data) {
+                if (layers[layerId].visible) {
                     layers[layerId].group.selectAll("path").attr("d", path);
                     
                     if (layers[layerId].type === 'point') {
@@ -1781,6 +1845,16 @@
             }
         }
         
+        const throttledRender = throttle(() => {
+            if (currentResolution === '10m') {
+                Object.keys(layers).forEach(layerId => {
+                    if (layers[layerId].visible) {
+                        renderLayer(layerId, '10m');
+                    }
+                });
+            }
+        }, 500);
+
         const drag = d3.drag()
             .on("start", function() {
                 isRotating = false;
@@ -1793,6 +1867,7 @@
                 projection.rotate([rotate[0] + event.dx * k, rotate[1] - event.dy * k]);
                 rotation = projection.rotate();
                 scheduleUpdate();
+                throttledRender();
             })
             .on("end", function() {
                 scheduleUpdate();
@@ -1804,7 +1879,25 @@
             .scaleExtent([0.5, 20])
             .on("zoom", function(event) {
                 if (!initialScale) return;
-                projection.scale(initialScale * event.transform.k);
+
+                const newScale = event.transform.k;
+                projection.scale(initialScale * newScale);
+
+                // Update slider
+                document.getElementById('zoomSlider').value = newScale;
+                document.getElementById('zoomValue').textContent = `${newScale.toFixed(1)}x`;
+
+                const newResolution = newScale > lodThreshold ? '10m' : '110m';
+                if (newResolution !== currentResolution) {
+                    currentResolution = newResolution;
+                    console.log(`Switched to ${currentResolution} resolution`);
+                    Object.keys(layers).forEach(layerId => {
+                        if (layers[layerId].visible) {
+                            renderLayer(layerId, currentResolution);
+                        }
+                    });
+                }
+
                 scheduleUpdate();
             });
         
@@ -1813,8 +1906,12 @@
         const tooltip = d3.select("#tooltip");
         
         // 事件监听器
-        document.getElementById("shapefilesInput").addEventListener("change", function(e) {
-            loadMultipleShapefiles(e.target.files);
+        document.getElementById("shapefilesInput110m").addEventListener("change", function(e) {
+            loadShapefiles(e.target.files, '110m');
+        });
+
+        document.getElementById("shapefilesInput10m").addEventListener("change", function(e) {
+            loadShapefiles(e.target.files, '10m');
         });
         
         Object.keys(layers).forEach(layerId => {
@@ -1899,6 +1996,13 @@
         
         document.getElementById("secondaryColor").addEventListener("change", function() {
             updateThemeColors(document.getElementById("primaryColor").value, this.value);
+        });
+
+        document.getElementById("zoomSlider").addEventListener("input", function() {
+            const newScale = +this.value;
+            const currentTransform = d3.zoomTransform(svg.node());
+            const newTransform = d3.zoomIdentity.translate(currentTransform.x, currentTransform.y).scale(newScale);
+            svg.call(zoom.transform, newTransform);
         });
         
         function updateRotationStatus() {
