@@ -823,15 +823,18 @@
                         <span class="category-toggle">▼</span>
                     </div>
                     <div class="category-content">
-                        <div style="color: #88ddff; font-size: 10px; line-height: 1.4; padding: 6px 0; margin-bottom: 8px;">
-                            <p>格式: 时间,事件名,地点1,关系,地点2</p>
-                            <p style="color: #ffaa00;">例: 2022年10月15日,俄乌冲突,俄罗斯,战争,乌克兰</p>
+                        <div style="color: #88ddff; font-size: 10px; line-height: 1.5; padding: 6px 0; margin-bottom: 8px;">
+                            <p>格式: 时间;事件名;地点1;关系;地点2</p>
+                            <p style="color: #ffaa00;">例: 2022-10-15;俄乌冲突;俄罗斯;战争;乌克兰</p>
+                            <p style="color: #ffaa00;">例: 2023-01-01;访问;美国,加利福尼亚;会见;中国,北京</p>
+                            <p>支持多行粘贴. 地点格式: 国家,省份,城市</p>
                         </div>
                         <div class="control-item">
-                            <input type="text" id="eventInput" placeholder="输入事件信息..." 
-                                   style="width: 100%; padding: 8px 12px; background: rgba(15, 52, 96, 0.8); border: 2px solid var(--primary-color, #00d4ff); border-radius: 6px; color: #fff; font-size: 12px; outline: none; margin-bottom: 8px; font-family: 'Segoe UI', sans-serif; transition: all 0.3s;"
+                            <textarea id="eventInput" placeholder="输入事件信息，每行一个..."
+                                   rows="3"
+                                   style="width: 100%; padding: 8px 12px; background: rgba(15, 52, 96, 0.8); border: 2px solid var(--primary-color, #00d4ff); border-radius: 6px; color: #fff; font-size: 12px; outline: none; margin-bottom: 8px; font-family: 'Segoe UI', sans-serif; transition: all 0.3s; resize: vertical;"
                                    onfocus="this.style.borderColor='#00ffff'; this.style.boxShadow='0 0 10px rgba(0, 255, 255, 0.3)';"
-                                   onblur="this.style.borderColor='var(--primary-color, #00d4ff)'; this.style.boxShadow='none';" />
+                                   onblur="this.style.borderColor='var(--primary-color, #00d4ff)'; this.style.boxShadow='none';"></textarea>
                             <button class="control-button" id="addEventBtn">➕ 添加事件</button>
                         </div>
                         <div style="max-height: 200px; overflow-y: auto; margin-top: 10px;" id="eventList"></div>
@@ -1641,7 +1644,7 @@
         
         // 事件管理
         function parseEventInput(input) {
-            const parts = input.split(',').map(s => s.trim());
+            const parts = input.split(';').map(s => s.trim());
             if (parts.length !== 5) return null;
             
             return {
@@ -1650,7 +1653,7 @@
                 location1: parts[2],
                 relation: parts[3],
                 location2: parts[4],
-                id: Date.now()
+                id: Date.now() + Math.random() // Add random to ensure unique ID for multi-line
             };
         }
         
@@ -1663,27 +1666,40 @@
         }
         
         function findLocationAndConnect(loc1Name, loc2Name, relation) {
-            console.log(`正在查找位置: ${loc1Name} 和 ${loc2Name}`);
-            
-            // 查找地点坐标和特征
+            console.log(`Connecting: ${loc1Name} and ${loc2Name}`);
+
+            // Find coordinates and feature data for both locations
             const loc1Result = findLocationCoordsAndFeature(loc1Name);
             const loc2Result = findLocationCoordsAndFeature(loc2Name);
-            
+
             if (loc1Result && loc2Result) {
-                // 绘制连接线
+                // Draw the connection line using coordinates
                 drawConnection(loc1Result.coords, loc2Result.coords, relation);
-                
-                // 高亮两个地点的边界
-                if (loc1Result.feature) {
-                    highlightFeatureBoundary(loc1Result.feature);
+
+                // --- Corrected Highlighting Logic ---
+                // If the initial search result already has a feature (from Shapefile), use it.
+                // If not (from JSON DB), perform a specific search to find the feature for highlighting.
+                const feature1 = loc1Result.feature || findFeatureByName(loc1Result.name);
+                const feature2 = loc2Result.feature || findFeatureByName(loc2Result.name);
+
+                if (feature1) {
+                    highlightFeatureBoundary(feature1);
+                    console.log(`Highlighting feature for ${loc1Name}`);
+                } else {
+                    console.warn(`Could not find a feature to highlight for ${loc1Name}`);
                 }
-                if (loc2Result.feature) {
-                    highlightFeatureBoundary(loc2Result.feature);
+                
+                if (feature2) {
+                    highlightFeatureBoundary(feature2);
+                     console.log(`Highlighting feature for ${loc2Name}`);
+                } else {
+                    console.warn(`Could not find a feature to highlight for ${loc2Name}`);
                 }
-                
-                document.getElementById("info").textContent = `✅ 已创建事件连接: ${loc1Name} → ${loc2Name}`;
-                
-                // 定位到第一个位置
+                // --- End of Correction ---
+
+                document.getElementById("info").textContent = `✅ Created event connection: ${loc1Name} → ${loc2Name}`;
+
+                // Rotate to the first location
                 setTimeout(() => {
                     const targetRotation = [-loc1Result.coords[0], -loc1Result.coords[1]];
                     d3.transition().duration(1500)
@@ -1700,71 +1716,100 @@
                 const missing = [];
                 if (!loc1Result) missing.push(loc1Name);
                 if (!loc2Result) missing.push(loc2Name);
-                document.getElementById("info").textContent = `⚠️ 无法找到位置: ${missing.join(', ')}`;
-                console.warn(`未找到位置:`, missing);
+                document.getElementById("info").textContent = `⚠️ Could not find location: ${missing.join(', ')}`;
+                console.warn(`Could not find locations:`, missing);
             }
         }
         
-        function findLocationCoordsAndFeature(locationName) {
-            console.log(`搜索位置: ${locationName}`);
-            
-            // 检查中文映射
-            let searchNames = [locationName];
-            if (chineseNameMap[locationName]) {
-                searchNames = searchNames.concat(chineseNameMap[locationName]);
+        function findLocationCoordsAndFeature(locationString) {
+            if (!citiesDatabase) {
+                console.error("citiesDatabase is not loaded. Cannot perform search.");
+                return null;
             }
-            
-            // 在已加载的图层中搜索
-            for (const layerId in layers) {
+
+            const parts = locationString.split(',').map(p => p.trim().toLowerCase());
+            const countryName = parts[0];
+            const stateName = parts.length > 1 ? parts[1] : null;
+            const cityName = parts.length > 2 ? parts[2] : null;
+
+            // Find country
+            const country = citiesDatabase.find(c => c.name.toLowerCase() === countryName);
+            if (!country) {
+                console.warn(`Country not found: "${countryName}"`);
+                return null;
+            }
+
+            // If only country is specified
+            if (!stateName) {
+                console.log(`Found Country: ${country.name}`);
+                return { coords: [parseFloat(country.longitude), parseFloat(country.latitude)], name: country.name, feature: null };
+            }
+
+            // Find state
+            if (!country.states) {
+                 console.warn(`Country "${country.name}" has no states data.`);
+                 return null;
+            }
+            const state = country.states.find(s => s.name.toLowerCase() === stateName);
+            if (!state) {
+                console.warn(`State not found: "${stateName}" in "${country.name}"`);
+                return null;
+            }
+
+            // If only state is specified
+            if (!cityName) {
+                console.log(`Found State: ${state.name}`);
+                return { coords: [parseFloat(state.longitude), parseFloat(state.latitude)], name: `${state.name}, ${country.name}`, feature: null };
+            }
+
+            // Find city
+             if (!state.cities) {
+                 console.warn(`State "${state.name}" has no cities data.`);
+                 return null;
+            }
+            const city = state.cities.find(c => c.name.toLowerCase() === cityName);
+            if (city) {
+                console.log(`Found City: ${city.name}`);
+                return { coords: [parseFloat(city.longitude), parseFloat(city.latitude)], name: `${city.name}, ${state.name}, ${country.name}`, feature: null };
+            }
+
+            console.warn(`City not found: "${cityName}" in "${state.name}"`);
+            return null;
+        }
+
+        function findFeatureByName(locationName) {
+            if (!locationName) return null;
+            const normalizedQuery = locationName.split(',')[0].trim().toLowerCase(); // Use the primary name for searching
+
+            let searchNames = [normalizedQuery];
+            if (chineseNameMap[locationName.trim()]) {
+                 searchNames = [...new Set(searchNames.concat(chineseNameMap[locationName.trim()].map(n => n.toLowerCase())))];
+            }
+
+            for (const layerId of ['countries', 'states']) { // Search in relevant layers
                 const layer = layers[layerId];
                 if (!layer.data) continue;
-                
-                // 搜索两种分辨率的数据
-                for (const resolution of ['110m', '10m']) {
+
+                for (const resolution of ['10m', '110m']) {
                     const data = layer.data[resolution];
                     if (!data || !data.features) continue;
-                    
+
                     for (const feature of data.features) {
+                        const props = feature.properties;
                         const featureNames = [
-                            feature.properties.NAME,
-                            feature.properties.name,
-                            feature.properties.ADMIN,
-                            feature.properties.admin,
-                            feature.properties.NAME_LONG,
-                            feature.properties.NAME_EN,
-                            feature.properties.SOVEREIGNT,
-                            feature.properties.SOV_A3,
-                            feature.properties.ISO_A2,
-                            feature.properties.ISO_A3
-                        ].filter(Boolean);
-                        
-                        // 检查是否匹配
+                            props.NAME, props.name, props.ADMIN, props.admin,
+                            props.NAME_LONG, props.NAME_EN, props.SOVEREIGNT
+                        ].filter(p => typeof p === 'string').map(n => n.trim().toLowerCase());
+
                         for (const sn of searchNames) {
-                            for (const fn of featureNames) {
-                                if (fn.toLowerCase() === sn.toLowerCase() || 
-                                    fn.toLowerCase().includes(sn.toLowerCase())) {
-                                    
-                                    let coords;
-                                    if (feature.geometry.type === 'Point') {
-                                        coords = feature.geometry.coordinates;
-                                    } else {
-                                        coords = d3.geoCentroid(feature);
-                                    }
-                                    
-                                    console.log(`找到位置: ${locationName} -> ${fn} at`, coords);
-                                    return {
-                                        coords: coords,
-                                        feature: feature,
-                                        name: fn
-                                    };
-                                }
+                            if (featureNames.includes(sn)) {
+                                console.log(`Found feature for highlighting: ${getFeatureName(feature)}`);
+                                return feature;
                             }
                         }
                     }
                 }
             }
-            
-            console.warn(`未找到位置: ${locationName}`);
             return null;
         }
         
@@ -1876,63 +1921,55 @@
         }
         
         function searchLocation(query) {
-            if (!query) {
+            if (!query || !citiesDatabase) {
                 document.getElementById("searchResults").innerHTML = "";
                 return;
             }
-            
-            const results = [];
+
             const lowerQuery = query.toLowerCase();
-            const originalQuery = query;
-            
-            // 检查中文映射
-            let searchTerms = [lowerQuery];
-            for (const [chinese, englishList] of Object.entries(chineseNameMap)) {
-                if (chinese.includes(query)) {
-                    searchTerms = searchTerms.concat(englishList.map(e => e.toLowerCase()));
+            const results = [];
+
+            citiesDatabase.forEach(country => {
+                // Check country
+                if (country.name.toLowerCase().includes(lowerQuery)) {
+                    results.push({
+                        type: 'country',
+                        name: country.name,
+                        path: country.name,
+                        lon: country.longitude,
+                        lat: country.latitude,
+                        feature: null
+                    });
                 }
-            }
-            
-            // 在图层中搜索
-            Object.keys(layers).forEach(layerId => {
-                const layer = layers[layerId];
-                if (!layer.data || layer.type !== 'polygon') return;
-                
-                for (const resolution of ['110m', '10m']) {
-                    const data = layer.data[resolution];
-                    if (!data || !data.features) continue;
-                    
-                    data.features.forEach(feature => {
-                        const names = [
-                            feature.properties.NAME,
-                            feature.properties.name,
-                            feature.properties.ADMIN,
-                            feature.properties.admin,
-                            feature.properties.NAME_LONG
-                        ].filter(Boolean);
-                        
-                        const isMatch = searchTerms.some(term =>
-                            names.some(name => name.toLowerCase().includes(term))
-                        );
-                        
-                        if (isMatch) {
-                            const centroid = d3.geoCentroid(feature);
+                // Check states
+                country.states?.forEach(state => {
+                    if (state.name.toLowerCase().includes(lowerQuery)) {
+                        results.push({
+                            type: 'state',
+                            name: state.name,
+                            path: `${country.name}, ${state.name}`,
+                            lon: state.longitude,
+                            lat: state.latitude,
+                            feature: null
+                        });
+                    }
+                    // Check cities
+                    state.cities?.forEach(city => {
+                        if (city.name.toLowerCase().includes(lowerQuery)) {
                             results.push({
-                                type: 'country',
-                                name: getFeatureName(feature),
-                                lat: centroid[1],
-                                lon: centroid[0],
-                                path: getFeatureName(feature),
-                                data: feature.properties,
-                                originalQuery: originalQuery,
-                                feature: feature
+                                type: 'city',
+                                name: city.name,
+                                path: `${country.name}, ${state.name}, ${city.name}`,
+                                lon: city.longitude,
+                                lat: city.latitude,
+                                feature: null
                             });
                         }
                     });
-                }
+                });
             });
             
-            displaySearchResults(results.slice(0, 20));
+            displaySearchResults(results.slice(0, 50));
         }
         
         function displaySearchResults(results) {
@@ -2178,15 +2215,30 @@
         });
         
         document.getElementById("addEventBtn").addEventListener("click", function() {
-            const input = document.getElementById("eventInput").value;
-            const eventData = parseEventInput(input);
-            
-            if (eventData) {
-                addEvent(eventData);
+            const multiLineInput = document.getElementById("eventInput").value;
+            const lines = multiLineInput.split('\n').filter(line => line.trim() !== '');
+
+            if (lines.length === 0) {
+                alert('请输入事件信息。');
+                return;
+            }
+
+            let addedCount = 0;
+            lines.forEach(line => {
+                const eventData = parseEventInput(line);
+                if (eventData) {
+                    addEvent(eventData);
+                    addedCount++;
+                } else {
+                    console.warn(`跳过格式错误的行: ${line}`);
+                }
+            });
+
+            if (addedCount > 0) {
                 document.getElementById("eventInput").value = '';
-                document.getElementById("info").textContent = `✅ 已添加事件: ${eventData.name}`;
+                document.getElementById("info").textContent = `✅ 已成功添加 ${addedCount} 个事件。`;
             } else {
-                alert('格式错误!请使用: 时间,事件名,地点1,关系,地点2');
+                alert('所有输入行的格式似乎都不正确。请检查格式：时间;事件名;地点1;关系;地点2');
             }
         });
         
