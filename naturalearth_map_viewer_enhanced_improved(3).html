@@ -2181,7 +2181,8 @@
             renderEventList();
             
             if (eventData.type === 'connection-event') {
-                findLocationAndConnect(eventData.location1, eventData.location2, eventData.relation);
+                const label = `${eventData.time}, ${eventData.name}, ${eventData.relation}`;
+                findLocationAndConnect(eventData.location1, eventData.location2, label);
             } else if (eventData.type === 'pin-event') {
                 findLocationAndCreatePin(eventData);
             }
@@ -2216,7 +2217,7 @@
             }
         }
         
-        function findLocationAndConnect(loc1Name, loc2Name, relation) {
+        function findLocationAndConnect(loc1Name, loc2Name, label) {
             console.log(`Connecting: ${loc1Name} and ${loc2Name}`);
 
             const loc1Result = findLocationCoordsAndFeature(loc1Name);
@@ -2224,7 +2225,7 @@
 
             if (loc1Result && loc2Result) {
                 const randomColor = d3.interpolateRainbow(Math.random());
-                drawConnection(loc1Result.coords, loc2Result.coords, relation, true, randomColor);
+                drawConnection(loc1Result.coords, loc2Result.coords, label, true, randomColor);
 
                 const feature1 = loc1Result.feature || findFeatureByName(loc1Result.name);
                 const feature2 = loc2Result.feature || findFeatureByName(loc2Result.name);
@@ -2478,7 +2479,12 @@
             
             // 重新绘制筛选后的事件
             events.forEach(event => {
-                findLocationAndConnect(event.location1, event.location2, event.relation);
+                if (event.type === 'connection-event') {
+                    const label = `${event.time}, ${event.name}, ${event.relation}`;
+                    findLocationAndConnect(event.location1, event.location2, label);
+                } else if (event.type === 'pin-event') {
+                    findLocationAndCreatePin(event);
+                }
             });
             
             renderEventList();
