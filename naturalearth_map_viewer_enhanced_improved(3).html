@@ -959,9 +959,11 @@
                     <div class="category-content">
                         <div style="color: #88ddff; font-size: 10px; line-height: 1.5; padding: 6px 0; margin-bottom: 8px;">
                             <p><strong>📝 事件格式:</strong></p>
-                            <p style="color: #00ff88;">时间;事件名;地点1[,子地点][,孙地点];关系;地点2[,子地点][,孙地点]</p>
+                            <p style="color: #00ff88;">时间;事件名;地点1;关系;地点2 (创建连接)</p>
+                            <p style="color: #00ff88;">;时间;事件名;地点;描述 (创建图钉)</p>
                             <p style="margin-top: 8px;"><strong>✅ 示例 (支持中文):</strong></p>
                             <p style="color: #ffaa00;">2022-10-15;俄乌冲突;俄罗斯;战争;乌克兰</p>
+                            <p style="color: #ffaa00;">;2024-05-20;科技峰会;美国,加利福尼亚;发布新AI模型</p>
                             <p style="color: #ffaa00;">2023-01-01;国事访问;美国,加利福尼亚;会见;中国,北京</p>
                             <p style="color: #ffaa00;">2024-03-15;经贸合作;德国,柏林;协议;日本,东京</p>
                             <p style="margin-top: 8px;"><strong>💡 提示:</strong></p>
@@ -1140,10 +1142,10 @@
         const path = d3.geoPath().projection(projection);
         const graticule = d3.geoGraticule();
         
-        // 添加地球光晕
-        svg.append("circle")
+        // 添加眼睛形状的光晕
+        svg.append("path")
             .attr("class", "sphere-glow")
-            .attr("r", 0);
+            .attr("d", ""); // Initially empty
         
         svg.append("path")
             .datum({type: "Sphere"})
@@ -1694,14 +1696,18 @@
             });
         }
         
-        function drawConnection(point1, point2, label = '', addToPanel = true) {
+        function drawConnection(point1, point2, label = '', addToPanel = true, color = null) {
             let pathData;
             
+            // 如果没有提供颜色，生成一个随机颜色
+            const randomColor = color || d3.interpolateRainbow(Math.random());
+
             if (useParabolicArcs) {
                 const interpolate = d3.geoInterpolate(point1, point2);
                 const midPoint = interpolate(0.5);
                 const distance = d3.geoDistance(point1, point2);
-                const arcHeight = distance * 0.3;
+                // 引入随机性以区分发射角度
+                const arcHeight = distance * (0.2 + Math.random() * 0.3); // 高度在0.2到0.5倍距离之间随机
                 const controlLat = midPoint[1] + arcHeight * 50;
                 const controlPoint = [midPoint[0], Math.min(90, Math.max(-90, controlLat))];
                 
@@ -1734,7 +1740,14 @@
                 .datum(pathData)
                 .attr("class", "connection-arc")
                 .attr("d", path)
+                .style("stroke", randomColor) // 应用随机颜色
                 .style("stroke-width", `${currentLineWidth}px`);
+
+            if (!useParabolicArcs) {
+                const dash1 = Math.floor(Math.random() * 15) + 5; // 5-20
+                const dash2 = Math.floor(Math.random() * 15) + 5; // 5-20
+                arcPath.style("stroke-dasharray", `${dash1}, ${dash2}`);
+            }
             
             const center = [-projection.rotate()[0], -projection.rotate()[1]];
             const isVisible1 = d3.geoDistance(point1, center) < Math.PI / 2;
@@ -1768,6 +1781,13 @@
             const labelText = labelGroup.append("text")
                 .attr("class", "connection-label")
                 .style("display", "none");
+
+            const connectorLine = connectionGroup.append("line")
+                .attr("class", "connection-label-connector")
+                .style("stroke", "var(--primary-color, #00d4ff)")
+                .style("stroke-width", 1)
+                .style("stroke-dasharray", "3, 3")
+                .style("display", "none");
             
             const connectionData = {
                 id: connId,
@@ -1777,6 +1797,9 @@
                 labelGroup: labelGroup,
                 labelBg: labelBg,
                 labelTextElement: labelText,
+                connectorLine: connectorLine,
+                labelYOffset: 0, // Initialize Y offset for label collision
+                labelXOffset: 0,
                 type: 'connection'
             };
             connections.push(connectionData);
@@ -1844,15 +1867,16 @@
             const isVisible = midProj && d3.geoDistance(connectionData.midPoint, center) < Math.PI / 2;
             
             if (connectionData.labelText && isVisible) {
-                // 清除文本元素之前的事件监听器
                 connectionData.labelTextElement
                     .on("dblclick", null)
                     .on("click", null);
                 
-                // 重新设置文本元素的属性和事件
+                const finalX = midProj[0] + connectionData.labelXOffset;
+                const finalY = midProj[1] + 5 + connectionData.labelYOffset;
+
                 connectionData.labelTextElement
-                    .attr("x", midProj[0])
-                    .attr("y", midProj[1] + 5)
+                    .attr("x", finalX)
+                    .attr("y", finalY)
                     .text(connectionData.labelText)
                     .style("display", "block")
                     .style("cursor", "pointer")
@@ -1870,66 +1894,125 @@
                 
                 const bbox = connectionData.labelTextElement.node().getBBox();
                 
-                // 清除之前的事件监听器
                 connectionData.labelBg
                     .on("dblclick", null)
                     .on("click", null);
                 
-                // 移除之前的title
                 connectionData.labelBg.selectAll("title").remove();
                 
-                // 重新设置属性和事件
                 connectionData.labelBg
-                    .attr("x", bbox.x - 6)
-                    .attr("y", bbox.y - 3)
-                    .attr("width", bbox.width + 12)
-                    .attr("height", bbox.height + 6)
+                    .attr("x", bbox.x - 4)
+                    .attr("y", bbox.y - 2)
+                    .attr("width", bbox.width + 8)
+                    .attr("height", bbox.height + 4)
                     .style("display", "block")
                     .style("cursor", "pointer")
-                    .on("dblclick", function(event) {
+                    .on("dblclick", (event) => {
                         event.stopPropagation();
                         showLabelEditor(connectionData, event);
                     })
-                    .on("click", function(event) {
-                        event.stopPropagation();
-                    });
+                    .on("click", (event) => event.stopPropagation());
                 
-                // 添加新的title
                 connectionData.labelBg.append("title").text("双击编辑标签");
+
+                // Update connector line
+                connectionData.connectorLine
+                    .attr("x1", midProj[0])
+                    .attr("y1", midProj[1])
+                    .attr("x2", finalX)
+                    .attr("y2", finalY - bbox.height / 2) // Connect to middle of the label
+                    .style("display", "block");
+
             } else {
                 connectionData.labelTextElement.style("display", "none");
                 connectionData.labelBg.style("display", "none");
+                connectionData.connectorLine.style("display", "none");
             }
         }
         
+        function adjustLabelLayout() {
+            const center = [-projection.rotate()[0], -projection.rotate()[1]];
+            const nodes = [];
+
+            // 1. Create nodes for the simulation
+            connections.forEach(conn => {
+                const isVisible = conn.labelText && d3.geoDistance(conn.midPoint, center) < Math.PI / 2;
+                if (isVisible) {
+                    const rectElement = conn.labelBg.node();
+                    if (rectElement) {
+                        const bbox = rectElement.getBoundingClientRect();
+                        const midProj = projection(conn.midPoint);
+                        if (bbox.width > 0 && bbox.height > 0 && midProj) {
+                            nodes.push({
+                                conn: conn,
+                                width: bbox.width,
+                                height: bbox.height,
+                                x: midProj[0] + conn.labelXOffset,
+                                y: midProj[1] + conn.labelYOffset,
+                                fx: midProj[0], // Anchor point
+                                fy: midProj[1]  // Anchor point
+                            });
+                        }
+                    }
+                }
+            });
+
+            if (nodes.length < 2) return;
+
+            // 2. Create and run the simulation
+            const simulation = d3.forceSimulation(nodes)
+                .force("collide", d3.forceCollide(d => Math.max(d.width, d.height) / 2 + 5).strength(0.8))
+                .force("charge", d3.forceManyBody().strength(-100))
+                .force("link", d3.forceLink().links([])) // No visible links, but use for anchor
+                .force("anchor", d3.forceX(d => d.fx).strength(0.01))
+                .force("anchorY", d3.forceY(d => d.fy).strength(0.01))
+                .stop();
+
+            // Run simulation for a fixed number of ticks
+            const n = Math.ceil(Math.log(simulation.alphaMin()) / Math.log(1 - simulation.alphaDecay()));
+            for (let i = 0; i < n; ++i) {
+                simulation.tick();
+            }
+
+            // 3. Apply the results
+            nodes.forEach(node => {
+                const midProj = projection(node.conn.midPoint);
+                if(midProj){
+                    node.conn.labelXOffset = node.x - midProj[0];
+                    node.conn.labelYOffset = node.y - midProj[1];
+                    updateConnectionLabel(node.conn);
+                }
+            });
+        }
+
         function updateConnections() {
             connections.forEach(conn => {
                 conn.group.select(".connection-arc").attr("d", path);
-                
                 const center = [-projection.rotate()[0], -projection.rotate()[1]];
                 
                 const point1Data = conn.group.selectAll("circle").filter((d, i) => i === 0).datum();
-                const isVisible1 = d3.geoDistance(point1Data.coordinates, center) < Math.PI / 2;
-                if (isVisible1) {
+                if (d3.geoDistance(point1Data.coordinates, center) < Math.PI / 2) {
                     const p1 = projection(point1Data.coordinates);
-                    conn.group.selectAll("circle").filter((d, i) => i === 0)
-                        .attr("cx", p1[0]).attr("cy", p1[1]).style("display", "block");
+                    conn.group.selectAll("circle").filter((d, i) => i === 0).attr("cx", p1[0]).attr("cy", p1[1]).style("display", "block");
                 } else {
                     conn.group.selectAll("circle").filter((d, i) => i === 0).style("display", "none");
                 }
                 
                 const point2Data = conn.group.selectAll("circle").filter((d, i) => i === 1).datum();
-                const isVisible2 = d3.geoDistance(point2Data.coordinates, center) < Math.PI / 2;
-                if (isVisible2) {
+                if (d3.geoDistance(point2Data.coordinates, center) < Math.PI / 2) {
                     const p2 = projection(point2Data.coordinates);
-                    conn.group.selectAll("circle").filter((d, i) => i === 1)
-                        .attr("cx", p2[0]).attr("cy", p2[1]).style("display", "block");
+                    conn.group.selectAll("circle").filter((d, i) => i === 1).attr("cx", p2[0]).attr("cy", p2[1]).style("display", "block");
                 } else {
                     conn.group.selectAll("circle").filter((d, i) => i === 1).style("display", "none");
                 }
                 
+                // Reset offsets and draw label at base position
+                conn.labelXOffset = 0;
+                conn.labelYOffset = 0;
                 updateConnectionLabel(conn);
             });
+
+            setTimeout(adjustLabelLayout, 50);
         }
         
         function clearConnections() {
@@ -2060,17 +2143,36 @@
         
         // 事件管理 - 改进的解析逻辑
         function parseEventInput(input) {
+            // 新的图钉事件格式: ;时间;事件名;地点;描述
+            if (input.startsWith(';')) {
+                const parts = input.substring(1).split(';').map(s => s.trim());
+                if (parts.length === 4) {
+                    return {
+                        type: 'pin-event',
+                        time: parts[0],
+                        name: parts[1],
+                        location: parts[2],
+                        description: parts[3],
+                        id: Date.now() + Math.random()
+                    };
+                }
+            }
+
+            // 原有的连接线事件格式
             const parts = input.split(';').map(s => s.trim());
-            if (parts.length !== 5) return null;
+            if (parts.length === 5) {
+                return {
+                    type: 'connection-event',
+                    time: parts[0],
+                    name: parts[1],
+                    location1: parts[2],
+                    relation: parts[3],
+                    location2: parts[4],
+                    id: Date.now() + Math.random()
+                };
+            }
             
-            return {
-                time: parts[0],
-                name: parts[1],
-                location1: parts[2],
-                relation: parts[3],
-                location2: parts[4],
-                id: Date.now() + Math.random()
-            };
+            return null;
         }
         
         function addEvent(eventData) {
@@ -2078,7 +2180,40 @@
             events.push(eventData);
             renderEventList();
             
-            findLocationAndConnect(eventData.location1, eventData.location2, eventData.relation);
+            if (eventData.type === 'connection-event') {
+                findLocationAndConnect(eventData.location1, eventData.location2, eventData.relation);
+            } else if (eventData.type === 'pin-event') {
+                findLocationAndCreatePin(eventData);
+            }
+        }
+
+        function findLocationAndCreatePin(eventData) {
+            const locResult = findLocationCoordsAndFeature(eventData.location);
+            if (locResult) {
+                const label = `${eventData.time}\n${eventData.name}\n${eventData.description}`;
+                const pin = createPin(locResult.coords, eventData.name, true);
+                pin.label = label;
+                updatePinLabel(pin);
+                updateEditItemInPanel(pin);
+
+                document.getElementById("info").textContent = `📍 已在 ${eventData.location} 创建事件图钉`;
+
+                // 定位到新创建的图钉
+                const targetRotation = [-locResult.coords[0], -locResult.coords[1]];
+                d3.transition().duration(1500)
+                    .tween("rotate", function() {
+                        const r = d3.interpolate(projection.rotate(), targetRotation);
+                        return function(t) {
+                            projection.rotate(r(t));
+                            rotation = projection.rotate();
+                            scheduleUpdate();
+                        };
+                    });
+
+            } else {
+                document.getElementById("info").textContent = `⚠️ 找不到地点: ${eventData.location}`;
+                alert(`无法找到地点: ${eventData.location}`);
+            }
         }
         
         function findLocationAndConnect(loc1Name, loc2Name, relation) {
@@ -2088,7 +2223,8 @@
             const loc2Result = findLocationCoordsAndFeature(loc2Name);
 
             if (loc1Result && loc2Result) {
-                drawConnection(loc1Result.coords, loc2Result.coords, relation);
+                const randomColor = d3.interpolateRainbow(Math.random());
+                drawConnection(loc1Result.coords, loc2Result.coords, relation, true, randomColor);
 
                 const feature1 = loc1Result.feature || findFeatureByName(loc1Result.name);
                 const feature2 = loc2Result.feature || findFeatureByName(loc2Result.name);
@@ -2791,11 +2927,23 @@
             const currentZoom = d3.zoomTransform(svg.node());
             projection.scale(initialScale * currentZoom.k).translate([width / 2, height / 2]);
             
-            svg.select(".sphere-glow")
-                .attr("cx", width / 2)
-                .attr("cy", height / 2)
-                .attr("r", initialScale * currentZoom.k + 10);
+            // 更新眼睛形状的光晕
+            const rX = width / 2; // Horizontal radius is half the page width
+            const rY = initialScale * currentZoom.k * 0.5; // Vertical radius proportional to globe
+            const cx = width / 2;
+            const cy = height / 2;
             
+            // 定义眼睛形状的路径
+            const eyePath = `
+                M ${cx - rX}, ${cy}
+                Q ${cx}, ${cy - rY}, ${cx + rX}, ${cy}
+                Q ${cx}, ${cy + rY * 1.5}, ${cx - rX}, ${cy}
+                Z
+            `;
+
+            svg.select(".sphere-glow")
+                .attr("d", eyePath);
+
             scheduleUpdate();
         }
 
