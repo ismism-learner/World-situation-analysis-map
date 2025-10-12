@@ -1663,27 +1663,40 @@
         }
         
         function findLocationAndConnect(loc1Name, loc2Name, relation) {
-            console.log(`正在查找位置: ${loc1Name} 和 ${loc2Name}`);
-            
-            // 查找地点坐标和特征
+            console.log(`Connecting: ${loc1Name} and ${loc2Name}`);
+
+            // Find coordinates and feature data for both locations
             const loc1Result = findLocationCoordsAndFeature(loc1Name);
             const loc2Result = findLocationCoordsAndFeature(loc2Name);
-            
+
             if (loc1Result && loc2Result) {
-                // 绘制连接线
+                // Draw the connection line using coordinates
                 drawConnection(loc1Result.coords, loc2Result.coords, relation);
-                
-                // 高亮两个地点的边界
-                if (loc1Result.feature) {
-                    highlightFeatureBoundary(loc1Result.feature);
+
+                // --- Corrected Highlighting Logic ---
+                // If the initial search result already has a feature (from Shapefile), use it.
+                // If not (from JSON DB), perform a specific search to find the feature for highlighting.
+                const feature1 = loc1Result.feature || findFeatureByName(loc1Result.name);
+                const feature2 = loc2Result.feature || findFeatureByName(loc2Result.name);
+
+                if (feature1) {
+                    highlightFeatureBoundary(feature1);
+                    console.log(`Highlighting feature for ${loc1Name}`);
+                } else {
+                    console.warn(`Could not find a feature to highlight for ${loc1Name}`);
                 }
-                if (loc2Result.feature) {
-                    highlightFeatureBoundary(loc2Result.feature);
+                
+                if (feature2) {
+                    highlightFeatureBoundary(feature2);
+                     console.log(`Highlighting feature for ${loc2Name}`);
+                } else {
+                    console.warn(`Could not find a feature to highlight for ${loc2Name}`);
                 }
-                
-                document.getElementById("info").textContent = `✅ 已创建事件连接: ${loc1Name} → ${loc2Name}`;
-                
-                // 定位到第一个位置
+                // --- End of Correction ---
+
+                document.getElementById("info").textContent = `✅ Created event connection: ${loc1Name} → ${loc2Name}`;
+
+                // Rotate to the first location
                 setTimeout(() => {
                     const targetRotation = [-loc1Result.coords[0], -loc1Result.coords[1]];
                     d3.transition().duration(1500)
@@ -1700,71 +1713,149 @@
                 const missing = [];
                 if (!loc1Result) missing.push(loc1Name);
                 if (!loc2Result) missing.push(loc2Name);
-                document.getElementById("info").textContent = `⚠️ 无法找到位置: ${missing.join(', ')}`;
-                console.warn(`未找到位置:`, missing);
+                document.getElementById("info").textContent = `⚠️ Could not find location: ${missing.join(', ')}`;
+                console.warn(`Could not find locations:`, missing);
             }
         }
         
         function findLocationCoordsAndFeature(locationName) {
-            console.log(`搜索位置: ${locationName}`);
-            
-            // 检查中文映射
-            let searchNames = [locationName];
-            if (chineseNameMap[locationName]) {
-                searchNames = searchNames.concat(chineseNameMap[locationName]);
+            console.log(`Starting search for: "${locationName}"`);
+            const trimmedLocationName = locationName.trim();
+
+            // --- 1. Generate all possible search terms from the user input ---
+            let inputSearchTerms = [trimmedLocationName.toLowerCase()];
+            if (chineseNameMap[trimmedLocationName]) {
+                inputSearchTerms = inputSearchTerms.concat(chineseNameMap[trimmedLocationName].map(n => n.toLowerCase()));
             }
-            
-            // 在已加载的图层中搜索
-            for (const layerId in layers) {
-                const layer = layers[layerId];
-                if (!layer.data) continue;
-                
-                // 搜索两种分辨率的数据
-                for (const resolution of ['110m', '10m']) {
-                    const data = layer.data[resolution];
-                    if (!data || !data.features) continue;
-                    
-                    for (const feature of data.features) {
-                        const featureNames = [
-                            feature.properties.NAME,
-                            feature.properties.name,
-                            feature.properties.ADMIN,
-                            feature.properties.admin,
-                            feature.properties.NAME_LONG,
-                            feature.properties.NAME_EN,
-                            feature.properties.SOVEREIGNT,
-                            feature.properties.SOV_A3,
-                            feature.properties.ISO_A2,
-                            feature.properties.ISO_A3
-                        ].filter(Boolean);
-                        
-                        // 检查是否匹配
-                        for (const sn of searchNames) {
-                            for (const fn of featureNames) {
-                                if (fn.toLowerCase() === sn.toLowerCase() || 
-                                    fn.toLowerCase().includes(sn.toLowerCase())) {
-                                    
-                                    let coords;
-                                    if (feature.geometry.type === 'Point') {
-                                        coords = feature.geometry.coordinates;
-                                    } else {
-                                        coords = d3.geoCentroid(feature);
-                                    }
-                                    
-                                    console.log(`找到位置: ${locationName} -> ${fn} at`, coords);
-                                    return {
-                                        coords: coords,
-                                        feature: feature,
-                                        name: fn
-                                    };
-                                }
+            for (const [cn, enList] of Object.entries(chineseNameMap)) {
+                if (enList.map(e => e.toLowerCase()).includes(trimmedLocationName.toLowerCase())) {
+                    inputSearchTerms.push(cn.toLowerCase());
+                }
+            }
+            inputSearchTerms = [...new Set(inputSearchTerms)];
+            console.log(`Searching with input terms:`, inputSearchTerms);
+
+            // --- 2. Primary Search: citiesDatabase (from JSON) ---
+            if (citiesDatabase) {
+                for (const country of citiesDatabase) {
+                    let dbCountryNames = [country.name.toLowerCase()];
+                    if(country.translations) {
+                        Object.values(country.translations).forEach(t => { if(t) dbCountryNames.push(t.toLowerCase()); });
+                    }
+                    if (chineseNameMap[country.name]) {
+                        dbCountryNames = dbCountryNames.concat(chineseNameMap[country.name].map(n => n.toLowerCase()));
+                    }
+                    dbCountryNames = [...new Set(dbCountryNames)];
+
+                    if (dbCountryNames.some(dbName => inputSearchTerms.includes(dbName))) {
+                        console.log(`Found country in JSON DB: ${country.name}`);
+                        const lon = parseFloat(String(country.longitude).replace(',', '.'));
+                        const lat = parseFloat(String(country.latitude).replace(',', '.'));
+                        return { coords: [lon, lat], feature: null, name: country.name };
+                    }
+
+                    for (const state of country.states) {
+                         let dbStateNames = [state.name.toLowerCase()];
+                        if(state.translations) {
+                            Object.values(state.translations).forEach(t => { if(t) dbStateNames.push(t.toLowerCase()); });
+                        }
+                        if (chineseNameMap[state.name]) {
+                            dbStateNames = dbStateNames.concat(chineseNameMap[state.name].map(n => n.toLowerCase()));
+                        }
+                        dbStateNames = [...new Set(dbStateNames)];
+
+                        if (dbStateNames.some(dbName => inputSearchTerms.includes(dbName))) {
+                            console.log(`Found state in JSON DB: ${state.name}`);
+                            const lon = parseFloat(String(state.longitude).replace(',', '.'));
+                            const lat = parseFloat(String(state.latitude).replace(',', '.'));
+                            return { coords: [lon, lat], feature: null, name: state.name };
+                        }
+
+                        for (const city of state.cities) {
+                             let dbCityNames = [city.name.toLowerCase()];
+                             if (chineseNameMap[city.name]) {
+                                dbCityNames = dbCityNames.concat(chineseNameMap[city.name].map(n => n.toLowerCase()));
+                             }
+                             dbCityNames = [...new Set(dbCityNames)];
+                            if (dbCityNames.some(dbName => inputSearchTerms.includes(dbName))) {
+                                console.log(`Found city in JSON DB: ${city.name}`);
+                                const lon = parseFloat(String(city.longitude).replace(',', '.'));
+                                const lat = parseFloat(String(city.latitude).replace(',', '.'));
+                                return { coords: [lon, lat], feature: null, name: city.name };
                             }
                         }
                     }
                 }
             }
-            
-            console.warn(`未找到位置: ${locationName}`);
+
+            // --- 3. Fallback Search: Loaded Shapefile Layers ---
+            console.log(`Not found in JSON DB, falling back to Shapefile layers for "${locationName}"`);
+            for (const layerId in layers) {
+                const layer = layers[layerId];
+                if (!layer.data) continue;
+                for (const resolution of ['10m', '110m']) {
+                    const data = layer.data[resolution];
+                    if (!data || !data.features) continue;
+                    for (const feature of data.features) {
+                        const props = feature.properties;
+                        let featureNames = [
+                            props.NAME, props.name, props.ADMIN, props.admin,
+                            props.NAME_LONG, props.NAME_EN, props.SOVEREIGNT,
+                            props.SOV_A3, props.ISO_A2, props.ISO_A3
+                        ].filter(p => typeof p === 'string').map(n => n.trim().toLowerCase());
+                        
+                        const canonicalName = getFeatureName(feature);
+                        if(chineseNameMap[canonicalName]){
+                            featureNames = featureNames.concat(chineseNameMap[canonicalName].map(n=>n.toLowerCase()));
+                        }
+                        featureNames = [...new Set(featureNames)];
+
+                        if (featureNames.some(fn => inputSearchTerms.includes(fn))) {
+                            const coords = feature.geometry.type === 'Point' ? feature.geometry.coordinates : d3.geoCentroid(feature);
+                            console.log(`Found in Shapefile: ${getFeatureName(feature)}`);
+                            return { coords: coords, feature: feature, name: getFeatureName(feature) };
+                        }
+                    }
+                }
+            }
+
+            console.warn(`Persistent search failed for: "${locationName}"`);
+            return null;
+        }
+
+        function findFeatureByName(locationName) {
+            if (!locationName) return null;
+            const normalizedQuery = locationName.split(',')[0].trim().toLowerCase(); // Use the primary name for searching
+
+            let searchNames = [normalizedQuery];
+            if (chineseNameMap[locationName.trim()]) {
+                 searchNames = [...new Set(searchNames.concat(chineseNameMap[locationName.trim()].map(n => n.toLowerCase())))];
+            }
+
+            for (const layerId of ['countries', 'states']) { // Search in relevant layers
+                const layer = layers[layerId];
+                if (!layer.data) continue;
+
+                for (const resolution of ['10m', '110m']) {
+                    const data = layer.data[resolution];
+                    if (!data || !data.features) continue;
+
+                    for (const feature of data.features) {
+                        const props = feature.properties;
+                        const featureNames = [
+                            props.NAME, props.name, props.ADMIN, props.admin,
+                            props.NAME_LONG, props.NAME_EN, props.SOVEREIGNT
+                        ].filter(p => typeof p === 'string').map(n => n.trim().toLowerCase());
+
+                        for (const sn of searchNames) {
+                            if (featureNames.includes(sn)) {
+                                console.log(`Found feature for highlighting: ${getFeatureName(feature)}`);
+                                return feature;
+                            }
+                        }
+                    }
+                }
+            }
             return null;
         }
         
