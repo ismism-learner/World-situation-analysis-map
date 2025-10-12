@@ -823,15 +823,18 @@
                         <span class="category-toggle">▼</span>
                     </div>
                     <div class="category-content">
-                        <div style="color: #88ddff; font-size: 10px; line-height: 1.4; padding: 6px 0; margin-bottom: 8px;">
-                            <p>格式: 时间,事件名,地点1,关系,地点2</p>
-                            <p style="color: #ffaa00;">例: 2022年10月15日,俄乌冲突,俄罗斯,战争,乌克兰</p>
+                        <div style="color: #88ddff; font-size: 10px; line-height: 1.5; padding: 6px 0; margin-bottom: 8px;">
+                            <p>格式: 时间;事件名;地点1;关系;地点2</p>
+                            <p style="color: #ffaa00;">例: 2022-10-15;俄乌冲突;俄罗斯;战争;乌克兰</p>
+                            <p style="color: #ffaa00;">例: 2023-01-01;访问;美国,加利福尼亚;会见;中国,北京</p>
+                            <p>支持多行粘贴. 地点格式: 国家,省份,城市</p>
                         </div>
                         <div class="control-item">
-                            <input type="text" id="eventInput" placeholder="输入事件信息..." 
-                                   style="width: 100%; padding: 8px 12px; background: rgba(15, 52, 96, 0.8); border: 2px solid var(--primary-color, #00d4ff); border-radius: 6px; color: #fff; font-size: 12px; outline: none; margin-bottom: 8px; font-family: 'Segoe UI', sans-serif; transition: all 0.3s;"
+                            <textarea id="eventInput" placeholder="输入事件信息，每行一个..."
+                                   rows="3"
+                                   style="width: 100%; padding: 8px 12px; background: rgba(15, 52, 96, 0.8); border: 2px solid var(--primary-color, #00d4ff); border-radius: 6px; color: #fff; font-size: 12px; outline: none; margin-bottom: 8px; font-family: 'Segoe UI', sans-serif; transition: all 0.3s; resize: vertical;"
                                    onfocus="this.style.borderColor='#00ffff'; this.style.boxShadow='0 0 10px rgba(0, 255, 255, 0.3)';"
-                                   onblur="this.style.borderColor='var(--primary-color, #00d4ff)'; this.style.boxShadow='none';" />
+                                   onblur="this.style.borderColor='var(--primary-color, #00d4ff)'; this.style.boxShadow='none';"></textarea>
                             <button class="control-button" id="addEventBtn">➕ 添加事件</button>
                         </div>
                         <div style="max-height: 200px; overflow-y: auto; margin-top: 10px;" id="eventList"></div>
@@ -1641,7 +1644,7 @@
         
         // 事件管理
         function parseEventInput(input) {
-            const parts = input.split(',').map(s => s.trim());
+            const parts = input.split(';').map(s => s.trim());
             if (parts.length !== 5) return null;
             
             return {
@@ -1650,7 +1653,7 @@
                 location1: parts[2],
                 relation: parts[3],
                 location2: parts[4],
-                id: Date.now()
+                id: Date.now() + Math.random() // Add random to ensure unique ID for multi-line
             };
         }
         
@@ -1718,108 +1721,59 @@
             }
         }
         
-        function findLocationCoordsAndFeature(locationName) {
-            console.log(`Starting search for: "${locationName}"`);
-            const trimmedLocationName = locationName.trim();
-
-            // --- 1. Generate all possible search terms from the user input ---
-            let inputSearchTerms = [trimmedLocationName.toLowerCase()];
-            if (chineseNameMap[trimmedLocationName]) {
-                inputSearchTerms = inputSearchTerms.concat(chineseNameMap[trimmedLocationName].map(n => n.toLowerCase()));
-            }
-            for (const [cn, enList] of Object.entries(chineseNameMap)) {
-                if (enList.map(e => e.toLowerCase()).includes(trimmedLocationName.toLowerCase())) {
-                    inputSearchTerms.push(cn.toLowerCase());
-                }
-            }
-            inputSearchTerms = [...new Set(inputSearchTerms)];
-            console.log(`Searching with input terms:`, inputSearchTerms);
-
-            // --- 2. Primary Search: citiesDatabase (from JSON) ---
-            if (citiesDatabase) {
-                for (const country of citiesDatabase) {
-                    let dbCountryNames = [country.name.toLowerCase()];
-                    if(country.translations) {
-                        Object.values(country.translations).forEach(t => { if(t) dbCountryNames.push(t.toLowerCase()); });
-                    }
-                    if (chineseNameMap[country.name]) {
-                        dbCountryNames = dbCountryNames.concat(chineseNameMap[country.name].map(n => n.toLowerCase()));
-                    }
-                    dbCountryNames = [...new Set(dbCountryNames)];
-
-                    if (dbCountryNames.some(dbName => inputSearchTerms.includes(dbName))) {
-                        console.log(`Found country in JSON DB: ${country.name}`);
-                        const lon = parseFloat(String(country.longitude).replace(',', '.'));
-                        const lat = parseFloat(String(country.latitude).replace(',', '.'));
-                        return { coords: [lon, lat], feature: null, name: country.name };
-                    }
-
-                    for (const state of country.states) {
-                         let dbStateNames = [state.name.toLowerCase()];
-                        if(state.translations) {
-                            Object.values(state.translations).forEach(t => { if(t) dbStateNames.push(t.toLowerCase()); });
-                        }
-                        if (chineseNameMap[state.name]) {
-                            dbStateNames = dbStateNames.concat(chineseNameMap[state.name].map(n => n.toLowerCase()));
-                        }
-                        dbStateNames = [...new Set(dbStateNames)];
-
-                        if (dbStateNames.some(dbName => inputSearchTerms.includes(dbName))) {
-                            console.log(`Found state in JSON DB: ${state.name}`);
-                            const lon = parseFloat(String(state.longitude).replace(',', '.'));
-                            const lat = parseFloat(String(state.latitude).replace(',', '.'));
-                            return { coords: [lon, lat], feature: null, name: state.name };
-                        }
-
-                        for (const city of state.cities) {
-                             let dbCityNames = [city.name.toLowerCase()];
-                             if (chineseNameMap[city.name]) {
-                                dbCityNames = dbCityNames.concat(chineseNameMap[city.name].map(n => n.toLowerCase()));
-                             }
-                             dbCityNames = [...new Set(dbCityNames)];
-                            if (dbCityNames.some(dbName => inputSearchTerms.includes(dbName))) {
-                                console.log(`Found city in JSON DB: ${city.name}`);
-                                const lon = parseFloat(String(city.longitude).replace(',', '.'));
-                                const lat = parseFloat(String(city.latitude).replace(',', '.'));
-                                return { coords: [lon, lat], feature: null, name: city.name };
-                            }
-                        }
-                    }
-                }
+        function findLocationCoordsAndFeature(locationString) {
+            if (!citiesDatabase) {
+                console.error("citiesDatabase is not loaded. Cannot perform search.");
+                return null;
             }
 
-            // --- 3. Fallback Search: Loaded Shapefile Layers ---
-            console.log(`Not found in JSON DB, falling back to Shapefile layers for "${locationName}"`);
-            for (const layerId in layers) {
-                const layer = layers[layerId];
-                if (!layer.data) continue;
-                for (const resolution of ['10m', '110m']) {
-                    const data = layer.data[resolution];
-                    if (!data || !data.features) continue;
-                    for (const feature of data.features) {
-                        const props = feature.properties;
-                        let featureNames = [
-                            props.NAME, props.name, props.ADMIN, props.admin,
-                            props.NAME_LONG, props.NAME_EN, props.SOVEREIGNT,
-                            props.SOV_A3, props.ISO_A2, props.ISO_A3
-                        ].filter(p => typeof p === 'string').map(n => n.trim().toLowerCase());
-                        
-                        const canonicalName = getFeatureName(feature);
-                        if(chineseNameMap[canonicalName]){
-                            featureNames = featureNames.concat(chineseNameMap[canonicalName].map(n=>n.toLowerCase()));
-                        }
-                        featureNames = [...new Set(featureNames)];
+            const parts = locationString.split(',').map(p => p.trim().toLowerCase());
+            const countryName = parts[0];
+            const stateName = parts.length > 1 ? parts[1] : null;
+            const cityName = parts.length > 2 ? parts[2] : null;
 
-                        if (featureNames.some(fn => inputSearchTerms.includes(fn))) {
-                            const coords = feature.geometry.type === 'Point' ? feature.geometry.coordinates : d3.geoCentroid(feature);
-                            console.log(`Found in Shapefile: ${getFeatureName(feature)}`);
-                            return { coords: coords, feature: feature, name: getFeatureName(feature) };
-                        }
-                    }
-                }
+            // Find country
+            const country = citiesDatabase.find(c => c.name.toLowerCase() === countryName);
+            if (!country) {
+                console.warn(`Country not found: "${countryName}"`);
+                return null;
             }
 
-            console.warn(`Persistent search failed for: "${locationName}"`);
+            // If only country is specified
+            if (!stateName) {
+                console.log(`Found Country: ${country.name}`);
+                return { coords: [parseFloat(country.longitude), parseFloat(country.latitude)], name: country.name, feature: null };
+            }
+
+            // Find state
+            if (!country.states) {
+                 console.warn(`Country "${country.name}" has no states data.`);
+                 return null;
+            }
+            const state = country.states.find(s => s.name.toLowerCase() === stateName);
+            if (!state) {
+                console.warn(`State not found: "${stateName}" in "${country.name}"`);
+                return null;
+            }
+
+            // If only state is specified
+            if (!cityName) {
+                console.log(`Found State: ${state.name}`);
+                return { coords: [parseFloat(state.longitude), parseFloat(state.latitude)], name: `${state.name}, ${country.name}`, feature: null };
+            }
+
+            // Find city
+             if (!state.cities) {
+                 console.warn(`State "${state.name}" has no cities data.`);
+                 return null;
+            }
+            const city = state.cities.find(c => c.name.toLowerCase() === cityName);
+            if (city) {
+                console.log(`Found City: ${city.name}`);
+                return { coords: [parseFloat(city.longitude), parseFloat(city.latitude)], name: `${city.name}, ${state.name}, ${country.name}`, feature: null };
+            }
+
+            console.warn(`City not found: "${cityName}" in "${state.name}"`);
             return null;
         }
 
@@ -1967,63 +1921,55 @@
         }
         
         function searchLocation(query) {
-            if (!query) {
+            if (!query || !citiesDatabase) {
                 document.getElementById("searchResults").innerHTML = "";
                 return;
             }
-            
-            const results = [];
+
             const lowerQuery = query.toLowerCase();
-            const originalQuery = query;
-            
-            // 检查中文映射
-            let searchTerms = [lowerQuery];
-            for (const [chinese, englishList] of Object.entries(chineseNameMap)) {
-                if (chinese.includes(query)) {
-                    searchTerms = searchTerms.concat(englishList.map(e => e.toLowerCase()));
+            const results = [];
+
+            citiesDatabase.forEach(country => {
+                // Check country
+                if (country.name.toLowerCase().includes(lowerQuery)) {
+                    results.push({
+                        type: 'country',
+                        name: country.name,
+                        path: country.name,
+                        lon: country.longitude,
+                        lat: country.latitude,
+                        feature: null
+                    });
                 }
-            }
-            
-            // 在图层中搜索
-            Object.keys(layers).forEach(layerId => {
-                const layer = layers[layerId];
-                if (!layer.data || layer.type !== 'polygon') return;
-                
-                for (const resolution of ['110m', '10m']) {
-                    const data = layer.data[resolution];
-                    if (!data || !data.features) continue;
-                    
-                    data.features.forEach(feature => {
-                        const names = [
-                            feature.properties.NAME,
-                            feature.properties.name,
-                            feature.properties.ADMIN,
-                            feature.properties.admin,
-                            feature.properties.NAME_LONG
-                        ].filter(Boolean);
-                        
-                        const isMatch = searchTerms.some(term =>
-                            names.some(name => name.toLowerCase().includes(term))
-                        );
-                        
-                        if (isMatch) {
-                            const centroid = d3.geoCentroid(feature);
+                // Check states
+                country.states?.forEach(state => {
+                    if (state.name.toLowerCase().includes(lowerQuery)) {
+                        results.push({
+                            type: 'state',
+                            name: state.name,
+                            path: `${country.name}, ${state.name}`,
+                            lon: state.longitude,
+                            lat: state.latitude,
+                            feature: null
+                        });
+                    }
+                    // Check cities
+                    state.cities?.forEach(city => {
+                        if (city.name.toLowerCase().includes(lowerQuery)) {
                             results.push({
-                                type: 'country',
-                                name: getFeatureName(feature),
-                                lat: centroid[1],
-                                lon: centroid[0],
-                                path: getFeatureName(feature),
-                                data: feature.properties,
-                                originalQuery: originalQuery,
-                                feature: feature
+                                type: 'city',
+                                name: city.name,
+                                path: `${country.name}, ${state.name}, ${city.name}`,
+                                lon: city.longitude,
+                                lat: city.latitude,
+                                feature: null
                             });
                         }
                     });
-                }
+                });
             });
             
-            displaySearchResults(results.slice(0, 20));
+            displaySearchResults(results.slice(0, 50));
         }
         
         function displaySearchResults(results) {
@@ -2269,15 +2215,30 @@
         });
         
         document.getElementById("addEventBtn").addEventListener("click", function() {
-            const input = document.getElementById("eventInput").value;
-            const eventData = parseEventInput(input);
-            
-            if (eventData) {
-                addEvent(eventData);
+            const multiLineInput = document.getElementById("eventInput").value;
+            const lines = multiLineInput.split('\n').filter(line => line.trim() !== '');
+
+            if (lines.length === 0) {
+                alert('请输入事件信息。');
+                return;
+            }
+
+            let addedCount = 0;
+            lines.forEach(line => {
+                const eventData = parseEventInput(line);
+                if (eventData) {
+                    addEvent(eventData);
+                    addedCount++;
+                } else {
+                    console.warn(`跳过格式错误的行: ${line}`);
+                }
+            });
+
+            if (addedCount > 0) {
                 document.getElementById("eventInput").value = '';
-                document.getElementById("info").textContent = `✅ 已添加事件: ${eventData.name}`;
+                document.getElementById("info").textContent = `✅ 已成功添加 ${addedCount} 个事件。`;
             } else {
-                alert('格式错误!请使用: 时间,事件名,地点1,关系,地点2');
+                alert('所有输入行的格式似乎都不正确。请检查格式：时间;事件名;地点1;关系;地点2');
             }
         });
         
