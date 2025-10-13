@@ -226,11 +226,11 @@
         }
         
         .pin-label-bg {
-            fill: rgba(22, 33, 62, 0.95);
+            fill: rgba(22, 33, 62, 0.85);
             stroke: var(--primary-color, #00d4ff);
             stroke-width: 2;
-            rx: 6;
-            ry: 6;
+            rx: 8;
+            ry: 8;
             cursor: pointer;
             transition: all 0.3s;
         }
@@ -242,10 +242,11 @@
         
         .pin-label-text {
             fill: var(--primary-color, #00d4ff);
-            font-size: 12px;
+            font-size: 14px;
             font-weight: bold;
             text-anchor: middle;
             cursor: pointer;
+            text-shadow: 0 0 4px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 0, 0, 0.5);
             transition: all 0.2s;
         }
         
@@ -1547,10 +1548,10 @@
             // 背景框 - 添加双击事件和拖动提示
             const labelBg = pinData.labelGroup.insert("rect", "text")
                 .attr("class", "pin-label-bg")
-                .attr("x", bbox.x - 6)
-                .attr("y", bbox.y - 3)
-                .attr("width", bbox.width + 12)
-                .attr("height", bbox.height + 6)
+                .attr("x", bbox.x - 4)
+                .attr("y", bbox.y - 2)
+                .attr("width", bbox.width + 8)
+                .attr("height", bbox.height + 4)
                 .style("cursor", "move")
                 .on("dblclick", function(event) {
                     event.stopPropagation();
