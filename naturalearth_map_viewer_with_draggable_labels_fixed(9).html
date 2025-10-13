@@ -2662,12 +2662,28 @@
             const stateQuery = parts.length > 1 ? parts[1] : null;
             const cityQuery = parts.length > 2 ? parts[2] : null;
 
+            const findItem = (items, query) => {
+                const lowerQuery = query.toLowerCase();
+                return items.find(item => {
+                    if (item.name.toLowerCase() === lowerQuery) return true;
+                    if (item.translations) {
+                        for (const key in item.translations) {
+                            if (item.translations[key] && item.translations[key].toLowerCase() === lowerQuery) {
+                                return true;
+                            }
+                        }
+                    }
+                    // Also check against the hardcoded chineseNameMap as a fallback
+                    const aliases = (chineseNameMap[query] || [query]).map(n => n.toLowerCase());
+                    return aliases.includes(item.name.toLowerCase());
+                });
+            };
+
             // --- Country Search ---
-            const countryAliases = (chineseNameMap[countryQuery] || [countryQuery]).map(n => n.toLowerCase());
-            const country = citiesDatabase.find(c => countryAliases.includes(c.name.toLowerCase()));
+            const country = findItem(citiesDatabase, countryQuery);
             
             if (!country) {
-                console.error(`❌ Country not found for query: "${countryQuery}". Tried aliases: ${countryAliases.join(', ')}`);
+                console.error(`❌ Country not found for query: "${countryQuery}".`);
                 return null;
             }
 
@@ -2681,11 +2697,10 @@
                  console.warn(`⚠ Country "${country.name}" has no states data.`);
                  return null;
             }
-            const stateAliases = (chineseNameMap[stateQuery] || [stateQuery]).map(n => n.toLowerCase());
-            const state = country.states.find(s => stateAliases.includes(s.name.toLowerCase()));
+            const state = findItem(country.states, stateQuery);
 
             if (!state) {
-                console.error(`❌ State not found for query: "${stateQuery}" in "${country.name}". Tried aliases: ${stateAliases.join(', ')}`);
+                console.error(`❌ State not found for query: "${stateQuery}" in "${country.name}".`);
                 return null;
             }
             
@@ -2699,15 +2714,14 @@
                  console.warn(`⚠ State "${state.name}" has no cities data.`);
                  return null;
             }
-            const cityAliases = (chineseNameMap[cityQuery] || [cityQuery]).map(n => n.toLowerCase());
-            const city = state.cities.find(c => cityAliases.includes(c.name.toLowerCase()));
+            const city = findItem(state.cities, cityQuery);
 
             if (city) {
                  console.log(`✓ Found City: ${city.name} for query "${cityQuery}"`);
                 return { coords: [parseFloat(city.longitude.replace(',', '.')), parseFloat(city.latitude.replace(',', '.'))], name: `${city.name}, ${state.name}, ${country.name}`, feature: null };
             }
 
-            console.error(`❌ City not found for query: "${cityQuery}" in "${state.name}". Tried aliases: ${cityAliases.join(', ')}`);
+            console.error(`❌ City not found for query: "${cityQuery}" in "${state.name}".`);
             return null;
         }
 
@@ -2915,8 +2929,22 @@
             const lowerQuery = query.toLowerCase();
             const results = [];
 
+            const doesMatch = (item, query) => {
+                if (item.name.toLowerCase().includes(query)) {
+                    return true;
+                }
+                if (item.translations) {
+                    for (const key in item.translations) {
+                        if (item.translations[key] && item.translations[key].toLowerCase().includes(query)) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+
             citiesDatabase.forEach(country => {
-                if (country.name.toLowerCase().includes(lowerQuery)) {
+                if (doesMatch(country, lowerQuery)) {
                     results.push({
                         type: 'country',
                         name: country.name,
@@ -2927,7 +2955,7 @@
                     });
                 }
                 country.states?.forEach(state => {
-                    if (state.name.toLowerCase().includes(lowerQuery)) {
+                    if (doesMatch(state, lowerQuery)) {
                         results.push({
                             type: 'state',
                             name: state.name,
@@ -2938,7 +2966,7 @@
                         });
                     }
                     state.cities?.forEach(city => {
-                        if (city.name.toLowerCase().includes(lowerQuery)) {
+                        if (doesMatch(city, lowerQuery)) {
                             results.push({
                                 type: 'city',
                                 name: city.name,
