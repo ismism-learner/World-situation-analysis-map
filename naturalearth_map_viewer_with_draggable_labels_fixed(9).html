@@ -2991,12 +2991,19 @@
                 return;
             }
             
-            resultsContainer.innerHTML = results.map((result, index) => `
+            resultsContainer.innerHTML = results.map((result, index) => {
+                let displayName = result.name;
+                let displayPath = result.path;
+                if (result.name === 'Taiwan') {
+                    displayName = 'CH-Taiwan';
+                    displayPath = 'CH-Taiwan';
+                }
+                return `
                 <div class="search-result-item" data-index="${index}">
-                    <div class="result-name">${result.name}</div>
-                    <div class="result-path">${result.path}</div>
+                    <div class="result-name">${displayName}</div>
+                    <div class="result-path">${displayPath}</div>
                 </div>
-            `).join('');
+            `}).join('');
             
             resultsContainer.querySelectorAll('.search-result-item').forEach((item, index) => {
                 item.addEventListener('click', () => selectSearchResult(results[index]));
