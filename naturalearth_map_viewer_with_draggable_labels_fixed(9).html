@@ -1986,100 +1986,95 @@
             const midProj = projection(connectionData.midPoint);
             const center = [-projection.rotate()[0], -projection.rotate()[1]];
             const isVisible = midProj && d3.geoDistance(connectionData.midPoint, center) < Math.PI / 2;
-            
+
+            // Always clear the group's direct transform before recalculating
+            connectionData.labelGroup.attr("transform", null);
+
             if (connectionData.labelText && isVisible) {
-                connectionData.labelTextElement
-                    .on("dblclick", null)
-                    .on("click", null);
+                // Clean up previous event handlers
+                connectionData.labelTextElement.on("dblclick", null).on("click", null);
+                connectionData.labelBg.on("dblclick", null).on("click", null);
                 
+                // Set text content and style. Position relative to group's (0,0)
+                connectionData.labelTextElement
+                    .attr("x", 0)
+                    .attr("y", 0)
+                    .text(connectionData.labelText)
+                    .style("display", "block")
+                    .style("cursor", "move")
+                    .attr("text-anchor", "middle") // Anchor text in the middle
+                    .attr("alignment-baseline", "middle"); // Anchor text vertically
+
+                // Get BBox for positioning the background
+                const bbox = connectionData.labelTextElement.node().getBBox();
+                const padding = { x: 8, y: 4 };
+                const rectWidth = bbox.width + padding.x * 2;
+                const rectHeight = bbox.height + padding.y * 2;
+
+                // Position the background relative to the text
+                connectionData.labelBg
+                    .attr("x", -rectWidth / 2)
+                    .attr("y", -rectHeight / 2)
+                    .attr("width", rectWidth)
+                    .attr("height", rectHeight)
+                    .style("display", "block")
+                    .style("cursor", "move");
+
+                // Calculate the final translation for the entire group
                 let finalX = midProj[0] + connectionData.labelXOffset;
                 let finalY = midProj[1] + 5 + connectionData.labelYOffset;
 
-                connectionData.labelTextElement
-                    .attr("x", finalX)
-                    .attr("y", finalY)
-                    .text(connectionData.labelText)
-                    .style("display", "block")
-                    .style("cursor", "move");
-                
-                const bbox = connectionData.labelTextElement.node().getBBox();
-                const padding = 10;
-
-                // Boundary collision detection and line shortening
-                let dx = finalX - midProj[0];
-                let dy = finalY - midProj[1];
-                const distance = Math.sqrt(dx * dx + dy * dy);
-                
+                // Boundary collision detection
+                const boundaryPadding = 10;
                 let constrainedX = finalX;
                 let constrainedY = finalY;
 
-                if (bbox.x < padding) {
-                    constrainedX = padding + bbox.width / 2;
+                if (finalX - rectWidth / 2 < boundaryPadding) {
+                    constrainedX = boundaryPadding + rectWidth / 2;
                 }
-                if (bbox.x + bbox.width > width - padding) {
-                    constrainedX = width - padding - bbox.width / 2;
+                if (finalX + rectWidth / 2 > width - boundaryPadding) {
+                    constrainedX = width - boundaryPadding - rectWidth / 2;
                 }
-                if (bbox.y < padding) {
-                    constrainedY = padding + bbox.height / 2;
+                if (finalY - rectHeight / 2 < boundaryPadding) {
+                    constrainedY = boundaryPadding + rectHeight / 2;
                 }
-                if (bbox.y + bbox.height > height - padding) {
-                    constrainedY = height - padding - bbox.height / 2;
-                }
-
-                // If the label was constrained, shorten the line
-                if (constrainedX !== finalX || constrainedY !== finalY) {
-                    finalX = constrainedX;
-                    finalY = constrainedY;
+                if (finalY + rectHeight / 2 > height - boundaryPadding) {
+                    constrainedY = height - boundaryPadding - rectHeight / 2;
                 }
 
-                // Apply corrected position
-                connectionData.labelTextElement
-                    .attr("x", finalX)
-                    .attr("y", finalY)
-                    .on("dblclick", function(event) {
-                        event.stopPropagation();
-                        showLabelEditor(connectionData, event);
-                    })
-                    .on("click", function(event) {
-                        event.stopPropagation();
-                    });
-                
-                // 移除之前的title并添加新的
+                finalX = constrainedX;
+                finalY = constrainedY;
+
+                // Apply the final, calculated transform to the group
+                connectionData.labelGroup.attr("transform", `translate(${finalX}, ${finalY})`);
+
+                // Re-attach event handlers
+                const dblClickHandler = (event) => {
+                    event.stopPropagation();
+                    showLabelEditor(connectionData, event);
+                };
+                const clickHandler = (event) => event.stopPropagation();
+
+                connectionData.labelTextElement.on("dblclick", dblClickHandler).on("click", clickHandler);
+                connectionData.labelBg.on("dblclick", dblClickHandler).on("click", clickHandler);
+
+                // Update tooltips
                 connectionData.labelTextElement.selectAll("title").remove();
                 connectionData.labelTextElement.append("title").text("双击编辑 / 拖动移动");
-                
-                const finalBbox = connectionData.labelTextElement.node().getBBox();
-                
-                connectionData.labelBg
-                    .on("dblclick", null)
-                    .on("click", null);
-                
                 connectionData.labelBg.selectAll("title").remove();
-                
-                connectionData.labelBg
-                    .attr("x", finalBbox.x - 4)
-                    .attr("y", finalBbox.y - 2)
-                    .attr("width", finalBbox.width + 8)
-                    .attr("height", finalBbox.height + 4)
-                    .style("display", "block")
-                    .style("cursor", "move")
-                    .on("dblclick", (event) => {
-                        event.stopPropagation();
-                        showLabelEditor(connectionData, event);
-                    })
-                    .on("click", (event) => event.stopPropagation());
-                
                 connectionData.labelBg.append("title").text("双击编辑 / 拖动移动");
 
-                // Update connector line to point to the new, constrained position
+                // Update connector line to point from the anchor to the group's new translated position
                 connectionData.connectorLine
                     .attr("x1", midProj[0])
                     .attr("y1", midProj[1])
                     .attr("x2", finalX)
-                    .attr("y2", finalY - finalBbox.height / 2) // Connect to middle of the label
+                    .attr("y2", finalY)
                     .style("display", "block");
 
             } else {
+                // Hide everything if not visible or no label
+                connectionData.labelGroup.attr("transform", null);
                 connectionData.labelTextElement.style("display", "none");
                 connectionData.labelBg.style("display", "none");
                 connectionData.connectorLine.style("display", "none");
@@ -3401,25 +3396,26 @@
             const drag = d3.drag()
                 .on("start", function (event) {
                     d3.select(this).raise(); 
-                    itemData._dragTempX = 0;
-                    itemData._dragTempY = 0;
-                    // Hide the connector line on drag start
+                    // Hide the connector line on drag start for a cleaner drag experience
                     labelGroup.select(connectorLineSelector).style("display", "none");
                 })
                 .on("drag", function (event) {
-                    itemData._dragTempX = (itemData._dragTempX || 0) + event.dx;
-                    itemData._dragTempY = (itemData._dragTempY || 0) + event.dy;
-                    d3.select(this).attr("transform", `translate(${itemData._dragTempX}, ${itemData._dragTempY})`);
+                    // Directly update the offsets
+                    itemData.labelXOffset = (itemData.labelXOffset || 0) + event.dx;
+                    itemData.labelYOffset = (itemData.labelYOffset || 0) + event.dy;
+
+                    // Immediately re-render the label with the new offsets.
+                    // This ensures a single source of truth for positioning.
+                    if (isPin) {
+                        updatePinLabel(itemData);
+                    } else {
+                        updateConnectionLabel(itemData);
+                    }
                 })
                 .on("end", function (event) {
-                    itemData.labelXOffset = (itemData.labelXOffset || 0) + (itemData._dragTempX || 0);
-                    itemData.labelYOffset = (itemData.labelYOffset || 0) + (itemData._dragTempY || 0);
-                    itemData._dragTempX = 0;
-                    itemData._dragTempY = 0;
-                    d3.select(this).attr("transform", null);
-                    
-                    // Show the line again and re-render the label to fix the line position
+                    // The position is already correct, just show the connector line again
                     labelGroup.select(connectorLineSelector).style("display", "block");
+                    // And one final update to ensure the line is drawn correctly to the final position
                     if (isPin) {
                         updatePinLabel(itemData);
                     } else {
