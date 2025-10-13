@@ -232,7 +232,6 @@
             rx: 8;
             ry: 8;
             cursor: pointer;
-            transition: all 0.3s;
         }
         
         .pin-label-bg:hover {
@@ -246,7 +245,6 @@
             font-weight: bold;
             text-anchor: middle;
             text-shadow: 0 0 4px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 0, 0, 0.5);
-            transition: all 0.2s;
             pointer-events: all; /* Allow events on the text */
             /* SVG stacking is DOM-order based; ensure text visually above bg */
         }
@@ -642,7 +640,6 @@
             font-weight: bold;
             text-anchor: middle;
             text-shadow: 0 0 4px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 0, 0, 0.5);
-            transition: all 0.2s;
             pointer-events: none; /* Allow events to pass through to the background */
         }
         
@@ -653,7 +650,6 @@
             rx: 8;
             ry: 8;
             cursor: pointer;
-            transition: all 0.3s;
         }
         
         .connection-label-bg:hover {
@@ -2200,36 +2196,47 @@
         function makeLabelDraggable(labelData) {
             const isConnection = labelData.type === 'connection';
             const labelGroup = isConnection ? labelData.labelGroup : labelData.labelGroup;
-            const bg = isConnection ? labelData.labelBg : labelData.labelGroup.select('.pin-label-bg');
-            const textElement = labelData.labelTextElement;
+            if (!labelGroup) return;
 
-            if (!bg.node() || !textElement.node()) return;
-            
+            // Avoid re-binding multiple times
+            if (labelGroup.node().__drag) return;
+
             const dragBehavior = d3.drag()
-                .on("start", function(event) {
+                .on("start", function (event) {
                     event.sourceEvent.stopPropagation();
                     d3.select(this).raise();
-                    if(labelGroup) labelGroup.raise();
+                    labelData._dragTempX = 0;
+                    labelData._dragTempY = 0;
+
+                    // Hide connector line on drag start
+                    if (isConnection) {
+                        labelData.connectorLine.style("display", "none");
+                    } else {
+                        labelData.labelGroup.select(".pin-label-line").style("display", "none");
+                    }
                 })
-                .on("drag", function(event) {
+                .on("drag", function (event) {
                     event.sourceEvent.stopPropagation();
+                    labelData._dragTempX = (labelData._dragTempX || 0) + event.dx;
+                    labelData._dragTempY = (labelData._dragTempY || 0) + event.dy;
+                    d3.select(this).attr("transform", `translate(${labelData._dragTempX}, ${labelData._dragTempY})`);
+                })
+                .on("end", function (event) {
+                    event.sourceEvent.stopPropagation();
+                    labelData.labelXOffset = (labelData.labelXOffset || 0) + (labelData._dragTempX || 0);
+                    labelData.labelYOffset = (labelData.labelYOffset || 0) + (labelData._dragTempY || 0);
+                    labelData._dragTempX = 0;
+                    labelData._dragTempY = 0;
+                    d3.select(this).attr("transform", null);
                     
-                    // 直接根据鼠标移动更新偏移量
-                    labelData.labelXOffset += event.dx;
-                    labelData.labelYOffset += event.dy;
-                    
-                    // 更新显示
                     if (isConnection) {
                         updateConnectionLabel(labelData);
                     } else {
                         updatePinLabel(labelData);
                     }
-                })
-                .on("end", function(event) {
-                    event.sourceEvent.stopPropagation();
                 });
-            
-            bg.call(dragBehavior);
+
+            labelGroup.call(dragBehavior);
         }
 
         function adjustLabelLayout() {
@@ -3282,45 +3289,7 @@
         setupPanelFocusListeners();
     
         // -------------------- 拖动文本框逻辑（平滑拖拽） --------------------
-        function makeLabelDraggable(pinData) {
-            const labelGroup = pinData.labelGroup;
-            if (!labelGroup) return;
-
-            // Avoid re-binding multiple times
-            if (labelGroup.__dragBound) return;
-            labelGroup.__dragBound = true;
-
-            const drag = d3.drag()
-                .on("start", function (event) {
-                    d3.select(this).raise(); // 提升层级，确保在最上层
-                    // reset temporary drag accumulators
-                    pinData._dragTempX = 0;
-                    pinData._dragTempY = 0;
-                })
-                .on("drag", function (event) {
-                    // accumulate temporary movement (for smooth real-time feedback)
-                    pinData._dragTempX = (pinData._dragTempX || 0) + event.dx;
-                    pinData._dragTempY = (pinData._dragTempY || 0) + event.dy;
-
-                    // apply temporary transform for smooth dragging
-                    d3.select(this).attr("transform", `translate(${pinData._dragTempX}, ${pinData._dragTempY})`);
-                })
-                .on("end", function (event) {
-                    // commit temp to permanent offsets
-                    pinData.labelXOffset = (pinData.labelXOffset || 0) + (pinData._dragTempX || 0);
-                    pinData.labelYOffset = (pinData.labelYOffset || 0) + (pinData._dragTempY || 0);
-                    // clear temps
-                    pinData._dragTempX = 0;
-                    pinData._dragTempY = 0;
-                    // remove temporary transform
-                    d3.select(this).attr("transform", null);
-                    // finalize by re-rendering label in its new position
-                    updatePinLabel(pinData);
-                });
-
-            // Bind drag to the group so clicking/dragging anywhere on label (bg or text) works
-            labelGroup.call(drag);
-        }
+        // This section has been consolidated into the single makeLabelDraggable function earlier in the script.
 </script>
 </body>
 </html>
