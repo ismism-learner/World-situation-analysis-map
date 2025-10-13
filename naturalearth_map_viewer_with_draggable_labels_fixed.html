@@ -826,6 +826,16 @@
                 <svg id="globe"></svg>
             </div>
             <div id="tooltip"></div>
+
+            <div id="location-picker-panel" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(22, 33, 62, 0.95); padding: 25px; border-radius: 12px; border: 2px solid #ff6b35; backdrop-filter: blur(10px); box-shadow: 0 8px 40px rgba(255, 107, 53, 0.5); z-index: 2000; text-align: center;">
+                <h3 style="color: #ff6b35; margin-bottom: 15px;">需要您的帮助</h3>
+                <p id="location-picker-prompt" style="color: #88ddff; margin-bottom: 10px;">请为 <strong style="color: #ffaa00;">地点1</strong> 选择位置:</p>
+                <p style="color: #88ddff; margin-bottom: 10px;">找不到地点: <strong id="missing-location-name" style="color: #ffaa00;"></strong></p>
+                <p style="color: #88ddff; font-size: 12px; margin-bottom: 20px;">请在地图上点击, 或使用搜索功能来指定该地点。</p>
+                <div id="selected-location-info" style="color: #00ff88; font-size: 13px; min-height: 20px; margin-bottom: 20px;">- 等待选择 -</div>
+                <button id="confirm-location-btn" class="control-button" disabled>✅ 确认地点</button>
+                <button id="cancel-event-creation-btn" class="control-button" style="background: rgba(255, 107, 53, 0.5); border-color: #ff6b35; margin-top: 10px;">❌ 取消创建</button>
+            </div>
             
             <div id="search-panel">
                 <input type="text" id="searchInput" placeholder="🔍 搜索城市、州/省、国家(支持中文)..." />
@@ -1113,6 +1123,8 @@
         let isRotating = false;
         let rotation = [0, 0];
         let pinMode = false;
+        let isAwaitingLocation = false;
+        let locationResolver = null;
         
         let selectedPoints = [];
         let connections = [];
@@ -1682,14 +1694,34 @@
             }
         });
         
+        function resolveAwaitedLocation(coords, name) {
+            if (!isAwaitingLocation || !locationResolver) return;
+
+            const locationInfo = {
+                coords: coords,
+                name: name,
+                feature: findFeatureByName(name)
+            };
+
+            document.getElementById('selected-location-info').textContent = `已选择: ${name}`;
+            document.getElementById('confirm-location-btn').disabled = false;
+
+            // Store the resolved data, so the confirmation button can use it
+            locationResolver.resolvedData = locationInfo;
+        }
+
         function handleFeatureClick(centroid, feature) {
+            const name = getFeatureName(feature);
+            if (isAwaitingLocation) {
+                resolveAwaitedLocation(centroid, name);
+                return;
+            }
+
             if (selectedPoints.length === 0) {
                 selectedPoints.push(centroid);
-                const name = getFeatureName(feature);
                 document.getElementById("info").textContent = `✅ 已选择起点: ${name}`;
             } else if (selectedPoints.length === 1) {
                 selectedPoints.push(centroid);
-                const name = getFeatureName(feature);
                 document.getElementById("info").textContent = `✅ 已创建连接线到: ${name}`;
                 drawConnection(selectedPoints[0], selectedPoints[1]);
                 selectedPoints = [];
@@ -2443,18 +2475,116 @@
             return null;
         }
         
-        function addEvent(eventData) {
-            allEvents.push(eventData);
-            events.push(eventData);
-            renderEventList();
+        let eventQueue = [];
+
+        async function processEventsQueue() {
+            // Use a copy of the queue and clear the original
+            const eventsToProcess = [...eventQueue];
+            eventQueue = [];
             
-            if (eventData.type === 'connection-event') {
-                const label = `${eventData.time}, ${eventData.name}, ${eventData.relation}`;
-                findLocationAndConnect(eventData.location1, eventData.location2, label);
-            } else if (eventData.type === 'pin-event') {
-                findLocationAndCreatePin(eventData);
+            // Use a for...of loop for robust sequential async operations
+            for (const eventData of eventsToProcess) {
+                document.getElementById("info").textContent = `⏳ 正在处理事件: ${eventData.name}...`;
+                try {
+                    if (eventData.type === 'connection-event') {
+                        const loc1 = await findLocationInteractive(eventData.location1, '请为 <strong style="color: #ffaa00;">地点1</strong> 选择位置:');
+                        if (!loc1) {
+                            console.log("Location 1 selection was cancelled. Skipping this event.");
+                            continue; // Skip to the next event
+                        }
+
+                        const loc2 = await findLocationInteractive(eventData.location2, '请为 <strong style="color: #ffaa00;">地点2</strong> 选择位置:');
+                        if (!loc2) {
+                            console.log("Location 2 selection was cancelled. Skipping this event.");
+                            continue; // Skip to the next event
+                        }
+
+                        const label = `${eventData.time}, ${eventData.name}, ${eventData.relation}`;
+                        drawConnection(loc1.coords, loc2.coords, label, true, d3.interpolateRainbow(Math.random()));
+                        if (loc1.feature) highlightFeatureBoundary(loc1.feature, loc1.name);
+                        if (loc2.feature) highlightFeatureBoundary(loc2.feature, loc2.name);
+
+                    } else if (eventData.type === 'pin-event') {
+                        const loc = await findLocationInteractive(eventData.location, '请为 <strong style="color: #ffaa00;">图钉</strong> 选择位置:');
+                        if (!loc) {
+                            console.log("Pin location selection was cancelled. Skipping this event.");
+                            continue; // Skip to the next event
+                        }
+
+                        const label = `${eventData.time}\n${eventData.name}\n${eventData.description}`;
+                        const pin = createPin(loc.coords, eventData.name, true);
+                        pin.label = label;
+                        updatePinLabel(pin);
+                        updateEditItemInPanel(pin);
+                        if (loc.feature) highlightFeatureBoundary(loc.feature, loc.name);
+                    }
+
+                    // Add to main list only after successful creation
+                    allEvents.push(eventData);
+                    events.push(eventData);
+                    renderEventList();
+
+                } catch (error) {
+                    console.error("处理事件时出错:", error);
+                    alert(`处理事件 "${eventData.name}" 时发生错误: ${error.message}`);
+                }
             }
-            updateConnections(true); // Recalculate layout for new event
+
+            document.getElementById("info").textContent = "✅ 所有事件处理完毕。";
+            updateConnections(true); // Recalculate layout for all new events
+        }
+
+        function findLocationInteractive(locationName, promptText = "请选择位置") {
+            return new Promise((resolve) => {
+                const result = findLocationCoordsAndFeature(locationName);
+                if (result) {
+                    console.log(`✓ Immediately found location: ${locationName}`);
+                    resolve(result);
+                } else {
+                    console.warn(`Location not found: "${locationName}". Awaiting user input.`);
+                    isAwaitingLocation = true;
+
+                    const panel = document.getElementById('location-picker-panel');
+                    const promptEl = document.getElementById('location-picker-prompt');
+                    const nameEl = document.getElementById('missing-location-name');
+                    const infoEl = document.getElementById('selected-location-info');
+                    const confirmBtn = document.getElementById('confirm-location-btn');
+                    const cancelBtn = document.getElementById('cancel-event-creation-btn');
+
+                    promptEl.innerHTML = promptText;
+                    nameEl.textContent = locationName;
+                    infoEl.textContent = "- 等待选择 -";
+                    confirmBtn.disabled = true;
+                    panel.style.display = 'block';
+
+                    const onConfirm = () => {
+                        isAwaitingLocation = false;
+                        panel.style.display = 'none';
+                        cleanup();
+                        console.log("Resolving with:", locationResolver.resolvedData);
+                        resolve(locationResolver.resolvedData);
+                    };
+
+                    const onCancel = () => {
+                        isAwaitingLocation = false;
+                        panel.style.display = 'none';
+                        cleanup();
+                        eventQueue = []; // Clear the queue on cancellation
+                        document.getElementById("info").textContent = "❌ 事件创建已取消。";
+                        resolve(null); // Resolve with null to stop processing
+                    };
+
+                    const cleanup = () => {
+                        confirmBtn.removeEventListener('click', onConfirm);
+                        cancelBtn.removeEventListener('click', onCancel);
+                        locationResolver = null;
+                    };
+
+                    locationResolver = { resolvedData: null };
+                    confirmBtn.addEventListener('click', onConfirm, { once: true });
+                    cancelBtn.addEventListener('click', onCancel, { once: true });
+                }
+            });
         }
 
         function findLocationAndCreatePin(eventData) {
@@ -2739,6 +2869,49 @@
             document.getElementById("info").textContent = `✅ 显示 ${events.length} 个事件`;
         }
         
+        function exportMapState() {
+            const state = {
+                version: 2, // Versioning for future format changes
+                connections: [],
+                pins: []
+            };
+
+            // Export connections with all their properties
+            connections.forEach(conn => {
+                state.connections.push({
+                    point1: conn.point1,
+                    point2: conn.point2,
+                    labelText: conn.labelText || '',
+                    labelXOffset: conn.labelXOffset || 0,
+                    labelYOffset: conn.labelYOffset || 0,
+                    // Get the actual color from the SVG element
+                    color: conn.group.select(".connection-arc").style("stroke")
+                });
+            });
+
+            // Export pins with all their properties
+            pins.forEach(pin => {
+                state.pins.push({
+                    coords: pin.coords,
+                    label: pin.label || '',
+                    labelXOffset: pin.labelXOffset || 0,
+                    labelYOffset: pin.labelYOffset || 0,
+                });
+            });
+
+            const dataStr = JSON.stringify(state, null, 2);
+            const dataBlob = new Blob([dataStr], {type: 'application/json'});
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `map_state_${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            document.getElementById("info").textContent = `✅ 已导出 ${state.connections.length} 条连线和 ${state.pins.length} 个图钉`;
+        }
+
         function exportEvents() {
             const dataStr = JSON.stringify(allEvents, null, 2);
             const dataBlob = new Blob([dataStr], {type: 'application/json'});
@@ -2751,6 +2924,60 @@
             document.getElementById("info").textContent = `✅ 已导出 ${allEvents.length} 个事件`;
         }
         
+        function importMapState(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const state = JSON.parse(e.target.result);
+
+                    // --- Backward Compatibility Check ---
+                    // If the file is the old format (an array of events), use the old logic.
+                    if (Array.isArray(state)) {
+                        console.log("Detected legacy event format. Importing with old logic.");
+                        importEvents(file); // Let the old function handle it.
+                        return;
+                    }
+
+                    if (state.version !== 2) {
+                        console.warn("Importing from an unknown or outdated map state version.");
+                    }
+
+                    // Clear existing, manually created items
+                    clearAllMarkings();
+
+                    // Re-create pins
+                    state.pins?.forEach(pinData => {
+                        const pin = createPin(pinData.coords, pinData.label);
+                        pin.labelXOffset = pinData.labelXOffset || 0;
+                        pin.labelYOffset = pinData.labelYOffset || 0;
+                        updatePinLabel(pin);
+                    });
+
+                    // Re-create connections
+                    state.connections?.forEach(connData => {
+                        const conn = drawConnection(
+                            connData.point1,
+                            connData.point2,
+                            connData.labelText,
+                            true,
+                            connData.color
+                        );
+                        conn.labelXOffset = connData.labelXOffset || 0;
+                        conn.labelYOffset = connData.labelYOffset || 0;
+                        updateConnectionLabel(conn);
+                    });
+
+                    scheduleUpdate();
+                    document.getElementById("info").textContent = `✅ 成功导入 ${state.connections?.length || 0} 条连线和 ${state.pins?.length || 0} 个图钉`;
+
+                } catch (error) {
+                    alert("导入地图状态失败: " + error.message);
+                    console.error("Import failed:", error);
+                }
+            };
+            reader.readAsText(file);
+        }
+
         function importEvents(file) {
             const reader = new FileReader();
             reader.onload = function(e) {
@@ -2873,9 +3100,15 @@
         }
         
         function selectSearchResult(result) {
+            const coords = [parseFloat(result.lon), parseFloat(result.lat)];
+
+            if (isAwaitingLocation) {
+                resolveAwaitedLocation(coords, result.path);
+                // Also rotate to the selected location for confirmation
+            }
+
             clearBoundaries();
             
-            const coords = [parseFloat(result.lon), parseFloat(result.lat)];
             const targetRotation = [-coords[0], -coords[1]];
             
             svg.interrupt();
@@ -2890,17 +3123,18 @@
                     };
                 });
             
-            // 创建图钉
-            setTimeout(() => {
-                const pin = createPin(coords, result.path);
-                document.getElementById("info").textContent = `📍 已在 ${result.path} 创建图钉`;
-                
-                // 尝试高亮边界
-                const featureToHighlight = result.feature || findFeatureByName(result.path);
-                if (featureToHighlight) {
-                    highlightFeatureBoundary(featureToHighlight, result.path);
-                }
-            }, 1500);
+            // Only create a pin if not in interactive selection mode
+            if (!isAwaitingLocation) {
+                setTimeout(() => {
+                    const pin = createPin(coords, result.path);
+                    document.getElementById("info").textContent = `📍 已在 ${result.path} 创建图钉`;
+
+                    const featureToHighlight = result.feature || findFeatureByName(result.path);
+                    if (featureToHighlight) {
+                        highlightFeatureBoundary(featureToHighlight, result.path);
+                    }
+                }, 1500);
+            }
         }
         
         function toggleArcMode() {
@@ -3106,6 +3340,12 @@
         });
         
         document.getElementById("addEventBtn").addEventListener("click", function() {
+            // Prevent adding new events while an interactive selection is active
+            if (isAwaitingLocation) {
+                alert("请先完成当前的地点选择。");
+                return;
+            }
+
             const multiLineInput = document.getElementById("eventInput").value;
             const lines = multiLineInput.split('\n').filter(line => line.trim() !== '');
 
@@ -3114,25 +3354,15 @@
                 return;
             }
 
-            let addedCount = 0;
-            lines.forEach(line => {
-                const eventData = parseEventInput(line);
-                if (eventData) {
-                    addEvent(eventData);
-                    addedCount++;
-                } else {
-                    console.warn(`跳过格式错误的行: ${line}`);
-                }
-            });
+            const newEvents = lines.map(parseEventInput).filter(Boolean);
 
-            if (addedCount > 0) {
+            if (newEvents.length > 0) {
+                eventQueue.push(...newEvents);
                 document.getElementById("eventInput").value = '';
-                document.getElementById("info").textContent = `✅ 已成功添加 ${addedCount} 个事件。`;
-                // Ensure all new elements are rendered after the loop
-                updateConnections(true);
-                updatePins();
+                processEventsQueue(); // Always start the processor
+                document.getElementById("info").textContent = `➕ 已将 ${newEvents.length} 个事件添加到处理队列。`;
             } else {
-                alert('所有输入行的格式似乎都不正确。请检查格式:时间;事件名;地点1;关系;地点2');
+                alert('所有输入行的格式似乎都不正确。请检查格式。');
             }
         });
         
@@ -3148,14 +3378,14 @@
             filterEventsByTimeRange(null, null);
         });
         
-        document.getElementById("exportEvents").addEventListener("click", exportEvents);
+        document.getElementById("exportEvents").addEventListener("click", exportMapState);
         
         document.getElementById("importEvents").addEventListener("click", function() {
             document.getElementById("importEventsFile").click();
         });
         
         document.getElementById("importEventsFile").addEventListener("change", function(e) {
-            if (e.target.files[0]) importEvents(e.target.files[0]);
+            if (e.target.files[0]) importMapState(e.target.files[0]);
         });
         
         const lineWidthSlider = document.getElementById("lineWidthSlider");
