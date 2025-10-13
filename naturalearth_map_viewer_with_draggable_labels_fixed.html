@@ -1054,70 +1054,22 @@
         const globeContainer = document.getElementById('globe-container');
         let width, height, initialScale;
 
-        // 增强的中文名称映射表
-        const chineseNameMap = {
-            '中国': ['China', 'CN', 'CHN', 'People\'s Republic of China'],
-            '美国': ['United States', 'US', 'USA', 'United States of America', 'America'],
-            '俄罗斯': ['Russia', 'RU', 'RUS', 'Russian Federation'],
-            '日本': ['Japan', 'JP', 'JPN'],
-            '韩国': ['South Korea', 'KR', 'KOR', 'Korea', 'Republic of Korea'],
-            '朝鲜': ['North Korea', 'KP', 'PRK', 'Korea, Democratic People\'s Republic of'],
-            '印度': ['India', 'IN', 'IND'],
-            '英国': ['United Kingdom', 'GB', 'GBR', 'Britain', 'Great Britain', 'UK'],
-            '法国': ['France', 'FR', 'FRA'],
-            '德国': ['Germany', 'DE', 'DEU'],
-            '意大利': ['Italy', 'IT', 'ITA'],
-            '加拿大': ['Canada', 'CA', 'CAN'],
-            '澳大利亚': ['Australia', 'AU', 'AUS'],
-            '巴西': ['Brazil', 'BR', 'BRA'],
-            '墨西哥': ['Mexico', 'MX', 'MEX'],
-            '西班牙': ['Spain', 'ES', 'ESP'],
-            '乌克兰': ['Ukraine', 'UA', 'UKR'],
-            '台湾': ['Taiwan', 'TW', 'TWN'],
-            '越南': ['Vietnam', 'VN', 'VNM', 'Viet Nam'],
-            '泰国': ['Thailand', 'TH', 'THA'],
-            '新加坡': ['Singapore', 'SG', 'SGP'],
-            '马来西亚': ['Malaysia', 'MY', 'MYS'],
-            '印度尼西亚': ['Indonesia', 'ID', 'IDN'],
-            '菲律宾': ['Philippines', 'PH', 'PHL'],
-            '土耳其': ['Turkey', 'TR', 'TUR'],
-            '埃及': ['Egypt', 'EG', 'EGY'],
-            '南非': ['South Africa', 'ZA', 'ZAF'],
-            '阿根廷': ['Argentina', 'AR', 'ARG'],
-            '智利': ['Chile', 'CL', 'CHL'],
-            '波兰': ['Poland', 'PL', 'POL'],
-            '瑞典': ['Sweden', 'SE', 'SWE'],
-            '挪威': ['Norway', 'NO', 'NOR'],
-            '芬兰': ['Finland', 'FI', 'FIN'],
-            '丹麦': ['Denmark', 'DK', 'DNK'],
-            '荷兰': ['Netherlands', 'NL', 'NLD'],
-            '比利时': ['Belgium', 'BE', 'BEL'],
-            '瑞士': ['Switzerland', 'CH', 'CHE'],
-            '奥地利': ['Austria', 'AT', 'AUT'],
-            '希腊': ['Greece', 'GR', 'GRC'],
-            '葡萄牙': ['Portugal', 'PT', 'PRT'],
-            '以色列': ['Israel', 'IL', 'ISR'],
-            '伊朗': ['Iran', 'IR', 'IRN'],
-            '伊拉克': ['Iraq', 'IQ', 'IRQ'],
-            '沙特阿拉伯': ['Saudi Arabia', 'SA', 'SAU'],
-            '阿联酋': ['United Arab Emirates', 'AE', 'ARE', 'UAE'],
-            '巴基斯坦': ['Pakistan', 'PK', 'PAK'],
-            '孟加拉国': ['Bangladesh', 'BD', 'BGD'],
-            '尼日利亚': ['Nigeria', 'NG', 'NGA'],
-            '肯尼亚': ['Kenya', 'KE', 'KEN'],
-            '新西兰': ['New Zealand', 'NZ', 'NZL'],
-            // 常用州/省/城市
-            '北京': ['Beijing', 'Peking'],
-            '上海': ['Shanghai'],
-            '广东': ['Guangdong'],
-            '加利福尼亚': ['California'],
-            '纽约': ['New York'],
-            '莫斯科': ['Moscow'],
-            '东京': ['Tokyo'],
-            '伦敦': ['London'],
-            '巴黎': ['Paris'],
-            '柏林': ['Berlin']
-        };
+        // Helper function to build a list of searchable names for a location
+        function buildSearchableNames(location) {
+            if (!location) return [];
+            const names = [location.name.toLowerCase()];
+            if (location.translations) {
+                Object.values(location.translations).forEach(name => {
+                    if (name) names.push(name.toLowerCase());
+                });
+            }
+            // Add other potential name fields if they exist
+            if (location.alt_names) {
+                 names.push(...location.alt_names.map(n => n.toLowerCase()));
+            }
+            console.log(`[buildSearchableNames] Generated names for ${location.name}:`, names);
+            return [...new Set(names)]; // Return unique names
+        }
 
         const defs = svg.append("defs");
         
@@ -2591,17 +2543,16 @@
                 return null;
             }
 
-            const parts = locationString.split(',').map(p => p.trim());
+            const parts = locationString.split(',').map(p => p.trim().toLowerCase());
             const countryQuery = parts[0];
             const stateQuery = parts.length > 1 ? parts[1] : null;
             const cityQuery = parts.length > 2 ? parts[2] : null;
 
             // --- Country Search ---
-            const countryAliases = (chineseNameMap[countryQuery] || [countryQuery]).map(n => n.toLowerCase());
-            const country = citiesDatabase.find(c => countryAliases.includes(c.name.toLowerCase()));
+            const country = citiesDatabase.find(c => buildSearchableNames(c).includes(countryQuery));
             
             if (!country) {
-                console.error(`❌ Country not found for query: "${countryQuery}". Tried aliases: ${countryAliases.join(', ')}`);
+                console.error(`❌ Country not found for query: "${countryQuery}"`);
                 return null;
             }
 
@@ -2615,11 +2566,10 @@
                  console.warn(`⚠ Country "${country.name}" has no states data.`);
                  return null;
             }
-            const stateAliases = (chineseNameMap[stateQuery] || [stateQuery]).map(n => n.toLowerCase());
-            const state = country.states.find(s => stateAliases.includes(s.name.toLowerCase()));
+            const state = country.states.find(s => buildSearchableNames(s).includes(stateQuery));
 
             if (!state) {
-                console.error(`❌ State not found for query: "${stateQuery}" in "${country.name}". Tried aliases: ${stateAliases.join(', ')}`);
+                console.error(`❌ State not found for query: "${stateQuery}" in "${country.name}"`);
                 return null;
             }
             
@@ -2633,29 +2583,29 @@
                  console.warn(`⚠ State "${state.name}" has no cities data.`);
                  return null;
             }
-            const cityAliases = (chineseNameMap[cityQuery] || [cityQuery]).map(n => n.toLowerCase());
-            const city = state.cities.find(c => cityAliases.includes(c.name.toLowerCase()));
+            // City names are generally not translated in the database, so we do a simple lowercase check.
+            const city = state.cities.find(c => c.name.toLowerCase() === cityQuery);
 
             if (city) {
                  console.log(`✓ Found City: ${city.name} for query "${cityQuery}"`);
                 return { coords: [parseFloat(city.longitude), parseFloat(city.latitude)], name: `${city.name}, ${state.name}, ${country.name}`, feature: null };
             }
 
-            console.error(`❌ City not found for query: "${cityQuery}" in "${state.name}". Tried aliases: ${cityAliases.join(', ')}`);
+            console.error(`❌ City not found for query: "${cityQuery}" in "${state.name}"`);
             return null;
         }
 
         function findFeatureByName(locationName) {
             if (!locationName) return null;
-            const normalizedQuery = locationName.split(',')[0].trim();
+            const normalizedQuery = locationName.split(',')[0].trim().toLowerCase();
 
-            let searchNames = [normalizedQuery.toLowerCase()];
+            // We need to find the location object in our database to get all its names.
+            const locationObject = citiesDatabase?.find(c => buildSearchableNames(c).includes(normalizedQuery)) ||
+                                   citiesDatabase?.flatMap(c => c.states || []).find(s => buildSearchableNames(s).includes(normalizedQuery));
+
+            const searchNames = locationObject ? buildSearchableNames(locationObject) : [normalizedQuery];
             
-            // 如果是中文名称，添加对应的英文名称
-            if (chineseNameMap[normalizedQuery]) {
-                searchNames = [...new Set(searchNames.concat(chineseNameMap[normalizedQuery].map(n => n.toLowerCase())))];
-                console.log(`Searching for feature with names: ${searchNames.join(', ')}`);
-            }
+            console.log(`Searching for feature with names: ${searchNames.join(', ')}`);
 
             for (const layerId of ['countries', 'states']) {
                 const layer = layers[layerId];
@@ -2841,56 +2791,69 @@
         }
         
         function searchLocation(query) {
-            if (!query || !citiesDatabase) {
-                document.getElementById("searchResults").innerHTML = "";
-                return;
-            }
-
-            const lowerQuery = query.toLowerCase();
-            const results = [];
-
-            citiesDatabase.forEach(country => {
-                if (country.name.toLowerCase().includes(lowerQuery)) {
-                    results.push({
-                        type: 'country',
-                        name: country.name,
-                        path: country.name,
-                        lon: country.longitude,
-                        lat: country.latitude,
-                        feature: null
-                    });
+            try {
+                if (!query || !citiesDatabase) {
+                    document.getElementById("searchResults").innerHTML = "";
+                    return;
                 }
-                country.states?.forEach(state => {
-                    if (state.name.toLowerCase().includes(lowerQuery)) {
+
+                const lowerQuery = query.toLowerCase();
+                const results = [];
+                console.log(`[searchLocation] Searching for: "${lowerQuery}"`);
+
+                citiesDatabase.forEach(country => {
+                    const countryNames = buildSearchableNames(country);
+                    if (countryNames.some(name => name.toLowerCase().includes(lowerQuery))) {
+                        console.log(`[searchLocation] Matched country: ${country.name}`);
                         results.push({
-                            type: 'state',
-                            name: state.name,
-                            path: `${country.name}, ${state.name}`,
-                            lon: state.longitude,
-                            lat: state.latitude,
+                            type: 'country',
+                            name: country.name,
+                            path: country.name,
+                            lon: country.longitude,
+                            lat: country.latitude,
                             feature: null
                         });
                     }
-                    state.cities?.forEach(city => {
-                        if (city.name.toLowerCase().includes(lowerQuery)) {
+
+                    country.states?.forEach(state => {
+                        const stateNames = buildSearchableNames(state);
+                        if (stateNames.some(name => name.toLowerCase().includes(lowerQuery))) {
+                            console.log(`[searchLocation] Matched state: ${state.name} in ${country.name}`);
                             results.push({
-                                type: 'city',
-                                name: city.name,
-                                path: `${country.name}, ${state.name}, ${city.name}`,
-                                lon: city.longitude,
-                                lat: city.latitude,
+                                type: 'state',
+                                name: state.name,
+                                path: `${country.name}, ${state.name}`,
+                                lon: state.longitude,
+                                lat: state.latitude,
                                 feature: null
                             });
                         }
+
+                        state.cities?.forEach(city => {
+                            if (city.name.toLowerCase().includes(lowerQuery)) {
+                                results.push({
+                                    type: 'city',
+                                    name: city.name,
+                                    path: `${country.name}, ${state.name}, ${city.name}`,
+                                    lon: city.longitude,
+                                    lat: city.latitude,
+                                    feature: null
+                                });
+                            }
+                        });
                     });
                 });
-            });
-            
-            displaySearchResults(results.slice(0, 50));
+
+                console.log("[searchLocation] Final results:", results);
+                displaySearchResults(results.slice(0, 50));
+            } catch (error) {
+                console.error("[searchLocation] Error:", error);
+            }
         }
         
         function displaySearchResults(results) {
             const resultsContainer = document.getElementById("searchResults");
+            console.log("Displaying search results:", results);
             
             if (results.length === 0) {
                 resultsContainer.innerHTML = '<div style="color: #88ddff; padding: 10px;">未找到匹配结果</div>';
