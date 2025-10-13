@@ -1,0 +1,3434 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 球形地球观察器 - 完整功能版</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/shapefile@0.6.6/dist/shapefile.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: radial-gradient(ellipse at center, #1a1a2e 0%, #0a0a14 100%);
+            color: #eee;
+            overflow: hidden;
+        }
+        
+        #container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        
+        #header {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            background: linear-gradient(135deg, #16213e 0%, #0f1926 100%);
+            padding: 15px 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 10;
+            backdrop-filter: blur(10px);
+            transform: translateY(-85%);
+            transition: transform 0.3s ease-in-out;
+        }
+
+        #header.header-expanded,
+        #header:hover {
+            transform: translateY(0);
+        }
+        
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, var(--primary-color, #00d4ff) 0%, var(--secondary-color, #0099ff) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: bold;
+        }
+        
+        #controls {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+        
+        .file-input-wrapper input[type=file] {
+            position: absolute;
+            left: -9999px;
+        }
+        
+        .file-input-label {
+            background: linear-gradient(135deg, var(--primary-color, #00d4ff) 0%, var(--secondary-color, #0099ff) 100%);
+            color: #0a0a14;
+            padding: 10px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+        }
+        
+        .file-input-label:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 212, 255, 0.5);
+        }
+        
+        button {
+            background: rgba(15, 52, 96, 0.8);
+            color: var(--primary-color, #00d4ff);
+            border: 2px solid var(--primary-color, #00d4ff);
+            padding: 8px 18px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            backdrop-filter: blur(10px);
+        }
+        
+        button:hover {
+            background: rgba(0, 212, 255, 0.2);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
+        }
+        
+        button.active {
+            background: var(--primary-color, #00d4ff);
+            color: #0a0a14;
+        }
+        
+        #info {
+            color: #88ddff;
+            font-size: 13px;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        
+        #map-container {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        #globe-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .sphere {
+            fill: url(#ocean-gradient);
+        }
+        
+        .sphere-glow {
+            fill: none;
+            stroke: var(--primary-color, #00d4ff);
+            stroke-width: 2;
+            opacity: 0.25;
+            filter: blur(15px);
+        }
+        
+        .layer-country {
+            fill: #1e3a5f;
+            stroke: var(--primary-color, #00d4ff);
+            stroke-width: 0.5;
+            transition: all 0.3s;
+        }
+        
+        .layer-country:hover {
+            fill: #2d5a8f;
+            stroke: #00ffff;
+            stroke-width: 1.5;
+            filter: drop-shadow(0 0 10px rgba(0, 255, 255, 0.8));
+            cursor: pointer;
+        }
+        
+        .layer-state {
+            fill: none;
+            stroke: var(--primary-color, #00d4ff);
+            stroke-width: 0.3;
+            opacity: 0.6;
+        }
+        
+        .layer-boundary {
+            fill: none;
+            stroke: #ff6b35;
+            stroke-width: 1;
+            opacity: 0.8;
+        }
+        
+        .layer-city {
+            fill: #ffaa00;
+            stroke: #fff;
+            stroke-width: 1;
+        }
+        
+        .layer-city:hover {
+            fill: #ff6b35;
+            r: 4;
+            cursor: pointer;
+        }
+        
+        .connection-arc {
+            fill: none;
+            stroke: #00ffff;
+            opacity: 0.6;
+            filter: drop-shadow(0 0 8px rgba(0, 255, 255, 0.8));
+            pointer-events: all;
+            cursor: pointer;
+        }
+        
+        .connection-point {
+            fill: #ff6b35;
+            stroke: #ffaa00;
+            stroke-width: 2;
+            filter: drop-shadow(0 0 10px rgba(255, 107, 53, 0.8));
+        }
+        
+        .pin-point {
+            cursor: pointer;
+        }
+        
+        .pin-point:hover {
+            filter: brightness(1.3);
+        }
+        
+        .pin-label {
+            cursor: pointer;
+        }
+        
+        .pin-label:hover .pin-label-bg {
+            fill: rgba(0, 212, 255, 0.3);
+            stroke-width: 3;
+        }
+        
+        .pin-label-bg {
+            fill: rgba(22, 33, 62, 0.85);
+            stroke: var(--primary-color, #00d4ff);
+            stroke-width: 2;
+            rx: 8;
+            ry: 8;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .pin-label-bg:hover {
+            fill: rgba(0, 212, 255, 0.3);
+            stroke-width: 3;
+        }
+        
+        .pin-label-text {
+            fill: var(--primary-color, #00d4ff);
+            font-size: 14px;
+            font-weight: bold;
+            text-anchor: middle;
+            text-shadow: 0 0 4px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 0, 0, 0.5);
+            transition: all 0.2s;
+            pointer-events: all; /* Allow events on the text */
+            /* SVG stacking is DOM-order based; ensure text visually above bg */
+        }
+        
+        .pin-label-line {
+            stroke: var(--primary-color, #00d4ff);
+            stroke-width: 1.5;
+            stroke-dasharray: 3, 3;
+            fill: none;
+        }
+        
+        .graticule {
+            fill: none;
+            stroke: rgba(0, 212, 255, 0.2);
+            stroke-width: 0.5;
+        }
+        
+        #tooltip {
+            position: absolute;
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.95) 0%, rgba(0, 150, 255, 0.95) 100%);
+            color: #0a0a14;
+            padding: 10px 16px;
+            border-radius: 8px;
+            pointer-events: none;
+            display: none;
+            font-size: 14px;
+            font-weight: bold;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            z-index: 1000;
+        }
+        
+        #layer-panel {
+            position: absolute;
+            bottom: 30px;
+            right: 30px;
+            background: rgba(22, 33, 62, 0.95);
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid var(--primary-color, #00d4ff);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            min-width: 320px;
+            max-width: 400px;
+            max-height: 85vh;
+            overflow-y: auto;
+            transform: translateX(calc(100% - 2px));
+            transition: transform 0.3s ease-in-out;
+        }
+        
+        #layer-panel:hover, #layer-panel.panel-focused {
+            transform: translateX(0);
+        }
+        
+        .panel-title {
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: var(--primary-color, #00d4ff);
+            font-size: 16px;
+            text-shadow: 0 2px 4px rgba(0, 212, 255, 0.5);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .layer-category {
+            margin-bottom: 20px;
+        }
+        
+        .category-header {
+            color: #88ddff;
+            font-weight: bold;
+            font-size: 13px;
+            margin-bottom: 8px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(0, 212, 255, 0.3);
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: all 0.3s;
+        }
+        
+        .category-header:hover {
+            color: var(--primary-color, #00d4ff);
+        }
+        
+        .category-toggle {
+            font-size: 10px;
+            transition: transform 0.3s;
+        }
+        
+        .category-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+        
+        .category-content {
+            max-height: 1000px;
+            overflow: hidden;
+            transition: max-height 0.3s ease-in-out, opacity 0.3s;
+            opacity: 1;
+        }
+        
+        .category-content.collapsed {
+            max-height: 0;
+            opacity: 0;
+        }
+        
+        .layer-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px;
+            margin: 5px 0;
+            background: rgba(15, 52, 96, 0.4);
+            border-radius: 6px;
+            transition: all 0.3s;
+        }
+        
+        .layer-item:hover {
+            background: rgba(0, 212, 255, 0.15);
+        }
+        
+        .layer-checkbox {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+        
+        .layer-label {
+            color: #88ddff;
+            font-size: 12px;
+            cursor: pointer;
+            flex: 1;
+        }
+        
+        .layer-status {
+            font-size: 10px;
+            color: #ff8800;
+            min-width: 80px;
+            text-align: right;
+        }
+        
+        .layer-status.loaded {
+            color: #00ff88;
+        }
+        
+        .control-section {
+            margin-top: 20px;
+            padding-top: 15px;
+            border-top: 2px solid rgba(0, 212, 255, 0.3);
+        }
+        
+        .control-item {
+            margin: 10px 0;
+        }
+        
+        .control-button {
+            width: 100%;
+            background: rgba(15, 52, 96, 0.6);
+            color: var(--primary-color, #00d4ff);
+            border: 1px solid var(--primary-color, #00d4ff);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .control-button:hover {
+            background: rgba(0, 212, 255, 0.2);
+            transform: translateY(-1px);
+        }
+        
+        .slider-control {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .slider-label {
+            color: #88ddff;
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .slider-input {
+            width: 100%;
+            cursor: pointer;
+        }
+        
+        .color-picker-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .color-input {
+            width: 60px;
+            height: 30px;
+            border: 2px solid var(--primary-color, #00d4ff);
+            border-radius: 6px;
+            cursor: pointer;
+            background: transparent;
+        }
+        
+        #legend {
+            position: absolute;
+            bottom: 30px;
+            left: 30px;
+            background: rgba(22, 33, 62, 0.85);
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid var(--primary-color, #00d4ff);
+            font-size: 13px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            transform: translateX(calc(-100% + 2px));
+            transition: transform 0.3s ease-in-out;
+        }
+        
+        #legend:hover {
+            transform: translateX(0);
+        }
+        
+        .legend-title {
+            font-weight: bold;
+            margin-bottom: 12px;
+            color: var(--primary-color, #00d4ff);
+            font-size: 15px;
+            text-shadow: 0 2px 4px rgba(0, 212, 255, 0.5);
+        }
+        
+        .legend-item {
+            margin: 8px 0;
+            color: #88ddff;
+        }
+        
+        #eventInput {
+            width: 100%;
+            padding: 10px 15px;
+            background: rgba(15, 52, 96, 0.8);
+            border: 2px solid var(--primary-color, #00d4ff);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+            margin-bottom: 10px;
+            font-family: 'Segoe UI', sans-serif;
+        }
+        
+        #eventInput::placeholder {
+            color: #88ddff;
+        }
+        
+        #eventInput:focus {
+            border-color: #00ffff;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+        }
+        
+        .event-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        
+        .event-item {
+            background: rgba(15, 52, 96, 0.6);
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 6px;
+            border-left: 3px solid var(--primary-color, #00d4ff);
+        }
+        
+        .event-time {
+            color: #ffaa00;
+            font-size: 11px;
+            font-weight: bold;
+        }
+        
+        .event-name {
+            color: var(--primary-color, #00d4ff);
+            font-weight: bold;
+            margin: 5px 0;
+        }
+        
+        .event-route {
+            color: #88ddff;
+            font-size: 12px;
+        }
+        
+        .event-actions {
+            margin-top: 8px;
+            display: flex;
+            gap: 5px;
+        }
+        
+        .event-btn {
+            padding: 4px 8px;
+            font-size: 10px;
+            background: rgba(0, 212, 255, 0.2);
+            border: 1px solid var(--primary-color, #00d4ff);
+            color: var(--primary-color, #00d4ff);
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .event-btn:hover {
+            background: rgba(0, 212, 255, 0.4);
+        }
+        
+        #search-panel {
+            position: absolute;
+            top: 30px;
+            left: 30px;
+            background: rgba(22, 33, 62, 0.95);
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid var(--primary-color, #00d4ff);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            min-width: 300px;
+            display: none;
+            transform: translateX(calc(-100% + 2px));
+            transition: transform 0.3s ease-in-out;
+        }
+        
+        #search-panel.active {
+            display: block;
+        }
+        
+        #search-panel:hover, #search-panel.panel-focused {
+            transform: translateX(0);
+        }
+        
+        #searchInput {
+            width: 100%;
+            padding: 10px 15px;
+            background: rgba(15, 52, 96, 0.8);
+            border: 2px solid var(--primary-color, #00d4ff);
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            outline: none;
+        }
+        
+        #searchInput:focus {
+            border-color: #00ffff;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+        }
+        
+        #searchResults {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        
+        .search-result-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: rgba(15, 52, 96, 0.6);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 1px solid transparent;
+        }
+        
+        .search-result-item:hover {
+            background: rgba(0, 212, 255, 0.2);
+            border-color: var(--primary-color, #00d4ff);
+            transform: translateX(5px);
+        }
+        
+        .result-name {
+            color: var(--primary-color, #00d4ff);
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        .result-path {
+            color: #88ddff;
+            font-size: 11px;
+            margin-top: 3px;
+        }
+        
+        .connection-label {
+            fill: var(--primary-color, #00d4ff);
+            font-size: 14px;
+            font-weight: bold;
+            text-anchor: middle;
+            text-shadow: 0 0 4px rgba(0, 0, 0, 0.8), 0 0 8px rgba(0, 0, 0, 0.5);
+            transition: all 0.2s;
+            pointer-events: none; /* Allow events to pass through to the background */
+        }
+        
+        .connection-label-bg {
+            fill: rgba(22, 33, 62, 0.85);
+            stroke: var(--primary-color, #00d4ff);
+            stroke-width: 2;
+            rx: 8;
+            ry: 8;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .connection-label-bg:hover {
+            fill: rgba(0, 212, 255, 0.3);
+            stroke-width: 3;
+            filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.6));
+        }
+        
+        .label-input {
+            position: absolute;
+            background: rgba(0, 212, 255, 0.95);
+            border: 2px solid #fff;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 14px;
+            font-weight: bold;
+            color: #0a0a14;
+            outline: none;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.5);
+            z-index: 1000;
+            min-width: 150px;
+        }
+        
+        .label-input::placeholder {
+            color: rgba(10, 10, 20, 0.5);
+            font-weight: normal;
+        }
+        
+        .label-input:focus {
+            box-shadow: 0 6px 30px rgba(0, 212, 255, 0.8);
+            border-color: #00ffff;
+        }
+        
+        .boundary-highlight {
+            fill: none;
+            stroke: #ff6b35;
+            stroke-width: 3;
+            stroke-dasharray: 10, 5;
+            filter: drop-shadow(0 0 10px rgba(255, 107, 53, 0.8));
+            animation: dash 1s linear infinite;
+        }
+        
+        @keyframes dash {
+            to {
+                stroke-dashoffset: -30;
+            }
+        }
+        
+        .boundary-highlight-group {
+            pointer-events: none;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #00ff88;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .time-filter-inputs {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .time-input {
+            flex: 1;
+            padding: 6px;
+            background: rgba(15, 52, 96, 0.8);
+            border: 2px solid var(--primary-color, #00d4ff);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 11px;
+            outline: none;
+        }
+        
+        .edit-layer-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px;
+            margin: 4px 0;
+            background: rgba(15, 52, 96, 0.4);
+            border-radius: 6px;
+            font-size: 11px;
+        }
+        
+        .edit-layer-item:hover {
+            background: rgba(0, 212, 255, 0.15);
+        }
+        
+        .edit-item-icon {
+            font-size: 14px;
+        }
+        
+        .edit-item-name {
+            flex: 1;
+            color: #88ddff;
+        }
+        
+        .edit-item-btn {
+            padding: 2px 6px;
+            font-size: 9px;
+            background: rgba(0, 212, 255, 0.2);
+            border: 1px solid var(--primary-color, #00d4ff);
+            color: var(--primary-color, #00d4ff);
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        
+        .edit-item-btn:hover {
+            background: rgba(0, 212, 255, 0.4);
+        }
+        
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 52, 96, 0.3);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 212, 255, 0.5);
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 212, 255, 0.8);
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="header">
+            <h1>🌍 3D 球形地球观察器 - 完整功能版</h1>
+            <div id="controls">
+                <div class="file-input-wrapper">
+                    <label for="shapefilesInput110m" class="file-input-label" style="font-size: 12px; padding: 8px 16px;">📁 加载 1:110m 地图</label>
+                    <input type="file" id="shapefilesInput110m" accept=".shp,.dbf,.shx,.prj" multiple />
+                </div>
+                <div class="file-input-wrapper">
+                    <label for="shapefilesInput10m" class="file-input-label" style="font-size: 12px; padding: 8px 16px;">📁 加载 1:10m 高精度地图</label>
+                    <input type="file" id="shapefilesInput10m" accept=".shp,.dbf,.shx,.prj" multiple />
+                </div>
+                <button id="resetBtn">🔄 重置视图</button>
+                <button id="toggleGraticule">🌐 切换经纬网</button>
+                <button id="toggleRotation">▶️ 开始旋转</button>
+                <button id="togglePinMode">📍 图钉模式</button>
+                <button id="clearConnections">🗑️ 清除连接线</button>
+                <button id="clearAllMarkings">💥 一键清除所有标识</button>
+                <button id="exportEvents">💾 导出事件</button>
+                <button id="importEvents">📂 导入事件</button>
+                <input type="file" id="importEventsFile" accept=".json" style="display:none" />
+                <div class="file-input-wrapper">
+                    <label for="citiesDbInput" class="file-input-label" style="font-size: 12px; padding: 6px 12px;">📍 加载城市数据库</label>
+                    <input type="file" id="citiesDbInput" accept=".json" />
+                </div>
+                <span id="info">请选择 Shapefile 文件加载地图数据</span>
+            </div>
+        </div>
+        
+        <div id="map-container">
+            <div id="globe-container">
+                <svg id="globe"></svg>
+            </div>
+            <div id="tooltip"></div>
+            
+            <div id="search-panel">
+                <input type="text" id="searchInput" placeholder="🔍 搜索城市、州/省、国家(支持中文)..." />
+                <div id="searchResults"></div>
+            </div>
+            
+            <div id="legend">
+                <div class="legend-title">🎮 操作说明</div>
+                <div class="legend-item">🖱️ 拖拽: 旋转地球</div>
+                <div class="legend-item">🖱️ 滚轮: 缩放视图</div>
+                <div class="legend-item">🖱️ 悬停: 查看信息</div>
+                <div class="legend-item">👆 点击: 选择连线</div>
+                <div class="legend-item">👆 双击线: 添加标注</div>
+                <div class="legend-item">👆 双击文本框: 编辑标签</div>
+                <div class="legend-item">✋ 拖动文本框: 移动标签(防重叠)</div>
+                <div class="legend-item">📍 图钉模式: 点击放置图钉</div>
+                <div class="legend-item">📍 双击图钉: 编辑标签</div>
+                <div class="legend-item">🔍 搜索: 创建图钉并定位</div>
+            </div>
+            
+            <div id="layer-panel">
+                <div class="panel-title">📚 图层管理</div>
+                
+                <div class="layer-category">
+                    <div class="category-header" onclick="toggleCategory(this)">
+                        <span>🗺️ 国家边界 (Admin 0)</span>
+                        <span class="category-toggle">▼</span>
+                    </div>
+                    <div class="category-content">
+                        <div class="layer-item">
+                            <input type="checkbox" class="layer-checkbox" id="layer-countries" data-layer="countries">
+                            <label class="layer-label" for="layer-countries">Countries (主要国家)</label>
+                            <span class="layer-status" id="status-countries-110m">110m: 未加载</span>
+                            <span class="layer-status" id="status-countries-10m">10m: 未加载</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="layer-category">
+                    <div class="category-header" onclick="toggleCategory(this)">
+                        <span>🏛️ 州/省 (Admin 1)</span>
+                        <span class="category-toggle">▼</span>
+                    </div>
+                    <div class="category-content">
+                        <div class="layer-item">
+                            <input type="checkbox" class="layer-checkbox" id="layer-states" data-layer="states">
+                            <label class="layer-label" for="layer-states">States & Provinces</label>
+                            <span class="layer-status" id="status-states-110m">110m: 未加载</span>
+                            <span class="layer-status" id="status-states-10m">10m: 未加载</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="layer-category">
+                    <div class="category-header" onclick="toggleCategory(this)">
+                        <span>🏙️ 城市 (Cities)</span>
+                        <span class="category-toggle">▼</span>
+                    </div>
+                    <div class="category-content">
+                        <div class="layer-item">
+                            <input type="checkbox" class="layer-checkbox" id="layer-cities" data-layer="cities">
+                            <label class="layer-label" for="layer-cities">Populated Places</label>
+                            <span class="layer-status" id="status-cities-110m">110m: 未加载</span>
+                            <span class="layer-status" id="status-cities-10m">10m: 未加载</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="layer-category" id="edit-layers-category">
+                    <div class="category-header" onclick="toggleCategory(this)">
+                        <span>✏️ 编辑图层</span>
+                        <span class="category-toggle">▼</span>
+                    </div>
+                    <div class="category-content" id="edit-layers-content">
+                        <div class="layer-item-placeholder" style="color: #88ddff; font-size: 11px; padding: 10px; text-align: center;">暂无编辑内容</div>
+                    </div>
+                </div>
+
+                <div class="control-section">
+                    <div class="category-header" onclick="toggleCategory(this)">
+                        <span>🎨 主题颜色</span>
+                        <span class="category-toggle">▼</span>
+                    </div>
+                    <div class="category-content">
+                        <div class="control-item color-picker-group">
+                            <label style="color: #88ddff; font-size: 12px;">主色:</label>
+                            <input type="color" class="color-input" id="primaryColor" value="#00d4ff">
+                        </div>
+                        <div class="control-item color-picker-group">
+                            <label style="color: #88ddff; font-size: 12px;">辅色:</label>
+                            <input type="color" class="color-input" id="secondaryColor" value="#0099ff">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="control-section">
+                    <div class="category-header" onclick="toggleCategory(this)">
+                        <span>🎨 连接线设置</span>
+                        <span class="category-toggle">▼</span>
+                    </div>
+                    <div class="category-content">
+                        <div class="control-item">
+                            <button class="control-button" id="toggleArcMode">🌈 切换抛物线模式</button>
+                        </div>
+                        <div class="control-item slider-control">
+                            <div class="slider-label">
+                                <span>线宽</span>
+                                <span id="lineWidthValue">2.5px</span>
+                            </div>
+                            <input type="range" class="slider-input" id="lineWidthSlider" min="1" max="20" value="2.5" step="0.5">
+                        </div>
+                        <div class="control-item slider-control">
+                            <div class="slider-label">
+                                <span>标签字号</span>
+                                <span id="labelFontSizeValue">14px</span>
+                            </div>
+                            <input type="range" class="slider-input" id="labelFontSizeSlider" min="8" max="24" value="14" step="1">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="control-section">
+                    <div class="category-header" onclick="toggleCategory(this)">
+                        <span>📅 事件管理</span>
+                        <span class="category-toggle">▼</span>
+                    </div>
+                    <div class="category-content">
+                        <div style="color: #88ddff; font-size: 10px; line-height: 1.5; padding: 6px 0; margin-bottom: 8px;">
+                            <p><strong>📝 事件格式:</strong></p>
+                            <p style="color: #00ff88;">时间;事件名;地点1;关系;地点2 (创建连接)</p>
+                            <p style="color: #00ff88;">;时间;事件名;地点;描述 (创建图钉)</p>
+                            <p style="margin-top: 8px;"><strong>✅ 示例 (支持中文):</strong></p>
+                            <p style="color: #ffaa00;">2022-10-15;俄乌冲突;俄罗斯;战争;乌克兰</p>
+                            <p style="color: #ffaa00;">;2024-05-20;科技峰会;美国,加利福尼亚;发布新AI模型</p>
+                            <p style="color: #ffaa00;">2023-01-01;国事访问;美国,加利福尼亚;会见;中国,北京</p>
+                            <p style="color: #ffaa00;">2024-03-15;经贸合作;德国,柏林;协议;日本,东京</p>
+                            <p style="margin-top: 8px;"><strong>💡 提示:</strong></p>
+                            <p>• 支持多行粘贴,一次添加多个事件</p>
+                            <p>• 子地点(州/省/城市)可选填</p>
+                            <p>• 请确保已加载城市数据库</p>
+                            <p>• 支持中英文地点名称</p>
+                        </div>
+                        <div class="control-item">
+                            <textarea id="eventInput" placeholder="输入事件信息,每行一个..."
+                                   rows="3"
+                                   style="width: 100%; padding: 8px 12px; background: rgba(15, 52, 96, 0.8); border: 2px solid var(--primary-color, #00d4ff); border-radius: 6px; color: #fff; font-size: 12px; outline: none; margin-bottom: 8px; font-family: 'Segoe UI', sans-serif; transition: all 0.3s; resize: vertical;"
+                                   onfocus="this.style.borderColor='#00ffff'; this.style.boxShadow='0 0 10px rgba(0, 255, 255, 0.3)';"
+                                   onblur="this.style.borderColor='var(--primary-color, #00d4ff)'; this.style.boxShadow='none';"></textarea>
+                            <button class="control-button" id="addEventBtn">➕ 添加事件</button>
+                        </div>
+                        <div class="control-item">
+                            <div style="color: #88ddff; font-size: 11px; margin-bottom: 5px;">时间范围筛选:</div>
+                            <div class="time-filter-inputs">
+                                <input type="date" class="time-input" id="startDate" placeholder="开始日期">
+                                <input type="date" class="time-input" id="endDate" placeholder="结束日期">
+                            </div>
+                            <button class="control-button" id="filterEventsBtn" style="margin-top: 8px;">🔍 按时间筛选</button>
+                            <button class="control-button" id="showAllEventsBtn" style="margin-top: 5px;">👁️ 显示全部</button>
+                        </div>
+                        <div style="max-height: 200px; overflow-y: auto; margin-top: 10px;" id="eventList"></div>
+                    </div>
+                </div>
+                <div class="control-section">
+                    <div class="category-header" onclick="toggleCategory(this)">
+                        <span>⚙️ 视图设置</span>
+                        <span class="category-toggle">▼</span>
+                    </div>
+                    <div class="category-content">
+                        <div class="control-item slider-control">
+                            <div class="slider-label">
+                                <span>缩放</span>
+                                <span id="zoomValue">1.0x</span>
+                            </div>
+                            <input type="range" class="slider-input" id="zoomSlider" min="0.5" max="20" value="1" step="0.1">
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="control-section">
+                    <div class="category-header" onclick="toggleCategory(this)">
+                        <span>💡 使用说明</span>
+                        <span class="category-toggle">▼</span>
+                    </div>
+                    <div class="category-content">
+                        <div style="color: #88ddff; font-size: 11px; line-height: 1.6; padding: 8px;">
+                            <p><strong>📍 省市区划建议:</strong></p>
+                            <p>• 加载 Admin 1 图层显示省/州边界</p>
+                            <p>• 使用更详细的 shapefile (如 10m 级别)</p>
+                            <p>• 按国家过滤特定省市数据</p>
+                            <p>• 使用城市数据库进行搜索定位</p>
+                            <p style="margin-top: 10px;"><strong>⚡ 性能优化:</strong></p>
+                            <p>• 缩放至 <strong>12倍</strong> 时自动切换到高精度地图</p>
+                            <p>• 高精度模式仅加载可见区域要素</p>
+                            <p>• 拖动时暂停更新高精度图层</p>
+                            <p>• 限制最多显示500个要素确保流畅</p>
+                            <p style="margin-top: 10px;"><strong>✏️ 编辑图层:</strong></p>
+                            <p>• 所有手动创建的内容在编辑图层管理</p>
+                            <p>• 图钉、连线、边界高亮均可独立控制</p>
+                            <p>• <strong>双击图钉</strong>或其<strong>文本框</strong>可编辑标签</p>
+                            <p>• <strong>双击连接线</strong>或其<strong>文本框</strong>可编辑关系</p>
+                            <p>• 搜索地点会自动创建图钉</p>
+                            <p>• 悬停文本框会显示高亮提示</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 折叠/展开分类的函数
+        function toggleCategory(header) {
+            const content = header.nextElementSibling;
+            const toggle = header.querySelector('.category-toggle');
+            
+            if (content.classList.contains('collapsed')) {
+                content.classList.remove('collapsed');
+                toggle.classList.remove('collapsed');
+            } else {
+                content.classList.add('collapsed');
+                toggle.classList.add('collapsed');
+            }
+        }
+        
+        const svg = d3.select("#globe");
+        const globeContainer = document.getElementById('globe-container');
+        let width, height, initialScale;
+
+        // 增强的中文名称映射表
+        const chineseNameMap = {
+            '中国': ['China', 'CN', 'CHN', 'People\'s Republic of China'],
+            '美国': ['United States', 'US', 'USA', 'United States of America', 'America'],
+            '俄罗斯': ['Russia', 'RU', 'RUS', 'Russian Federation'],
+            '日本': ['Japan', 'JP', 'JPN'],
+            '韩国': ['South Korea', 'KR', 'KOR', 'Korea', 'Republic of Korea'],
+            '朝鲜': ['North Korea', 'KP', 'PRK', 'Korea, Democratic People\'s Republic of'],
+            '印度': ['India', 'IN', 'IND'],
+            '英国': ['United Kingdom', 'GB', 'GBR', 'Britain', 'Great Britain', 'UK'],
+            '法国': ['France', 'FR', 'FRA'],
+            '德国': ['Germany', 'DE', 'DEU'],
+            '意大利': ['Italy', 'IT', 'ITA'],
+            '加拿大': ['Canada', 'CA', 'CAN'],
+            '澳大利亚': ['Australia', 'AU', 'AUS'],
+            '巴西': ['Brazil', 'BR', 'BRA'],
+            '墨西哥': ['Mexico', 'MX', 'MEX'],
+            '西班牙': ['Spain', 'ES', 'ESP'],
+            '乌克兰': ['Ukraine', 'UA', 'UKR'],
+            '台湾': ['Taiwan', 'TW', 'TWN'],
+            '越南': ['Vietnam', 'VN', 'VNM', 'Viet Nam'],
+            '泰国': ['Thailand', 'TH', 'THA'],
+            '新加坡': ['Singapore', 'SG', 'SGP'],
+            '马来西亚': ['Malaysia', 'MY', 'MYS'],
+            '印度尼西亚': ['Indonesia', 'ID', 'IDN'],
+            '菲律宾': ['Philippines', 'PH', 'PHL'],
+            '土耳其': ['Turkey', 'TR', 'TUR'],
+            '埃及': ['Egypt', 'EG', 'EGY'],
+            '南非': ['South Africa', 'ZA', 'ZAF'],
+            '阿根廷': ['Argentina', 'AR', 'ARG'],
+            '智利': ['Chile', 'CL', 'CHL'],
+            '波兰': ['Poland', 'PL', 'POL'],
+            '瑞典': ['Sweden', 'SE', 'SWE'],
+            '挪威': ['Norway', 'NO', 'NOR'],
+            '芬兰': ['Finland', 'FI', 'FIN'],
+            '丹麦': ['Denmark', 'DK', 'DNK'],
+            '荷兰': ['Netherlands', 'NL', 'NLD'],
+            '比利时': ['Belgium', 'BE', 'BEL'],
+            '瑞士': ['Switzerland', 'CH', 'CHE'],
+            '奥地利': ['Austria', 'AT', 'AUT'],
+            '希腊': ['Greece', 'GR', 'GRC'],
+            '葡萄牙': ['Portugal', 'PT', 'PRT'],
+            '以色列': ['Israel', 'IL', 'ISR'],
+            '伊朗': ['Iran', 'IR', 'IRN'],
+            '伊拉克': ['Iraq', 'IQ', 'IRQ'],
+            '沙特阿拉伯': ['Saudi Arabia', 'SA', 'SAU'],
+            '阿联酋': ['United Arab Emirates', 'AE', 'ARE', 'UAE'],
+            '巴基斯坦': ['Pakistan', 'PK', 'PAK'],
+            '孟加拉国': ['Bangladesh', 'BD', 'BGD'],
+            '尼日利亚': ['Nigeria', 'NG', 'NGA'],
+            '肯尼亚': ['Kenya', 'KE', 'KEN'],
+            '新西兰': ['New Zealand', 'NZ', 'NZL'],
+            // 常用州/省/城市
+            '北京': ['Beijing', 'Peking'],
+            '上海': ['Shanghai'],
+            '广东': ['Guangdong'],
+            '加利福尼亚': ['California'],
+            '纽约': ['New York'],
+            '莫斯科': ['Moscow'],
+            '东京': ['Tokyo'],
+            '伦敦': ['London'],
+            '巴黎': ['Paris'],
+            '柏林': ['Berlin']
+        };
+
+        const defs = svg.append("defs");
+        
+        // 海洋渐变
+        const oceanGradient = defs.append("radialGradient")
+            .attr("id", "ocean-gradient");
+        oceanGradient.append("stop")
+            .attr("offset", "0%")
+            .attr("stop-color", "#1a3d5c");
+        oceanGradient.append("stop")
+            .attr("offset", "100%")
+            .attr("stop-color", "#0a1929");
+        
+        const projection = d3.geoOrthographic()
+            .rotate([0, 0, 0])
+            .clipAngle(90);
+        
+        const path = d3.geoPath().projection(projection);
+        const graticule = d3.geoGraticule();
+        
+        // 添加眼睛形状的光晕
+        svg.append("path")
+            .attr("class", "sphere-glow")
+            .attr("d", ""); // Initially empty
+        
+        svg.append("path")
+            .datum({type: "Sphere"})
+            .attr("class", "sphere")
+            .attr("d", path);
+        
+        const layersGroup = svg.append("g").attr("id", "layers");
+        const connectionsGroup = svg.append("g").attr("class", "connections");
+        const pinsGroup = svg.append("g").attr("class", "pins");
+        
+        let graticulePath = layersGroup.append("path")
+            .datum(graticule)
+            .attr("class", "graticule")
+            .attr("d", path);
+        
+        let showGraticule = true;
+        let isRotating = false;
+        let rotation = [0, 0];
+        let pinMode = false;
+        
+        let selectedPoints = [];
+        let connections = [];
+        let pins = [];
+        let events = [];
+        let allEvents = []; // 存储所有事件
+        let useParabolicArcs = false;
+        let citiesDatabase = null;
+        let currentBoundaries = [];
+        let currentResolution = '110m';
+        const lodThreshold = 12;
+        let lastDrawTime = 0;
+        let editLayerIdCounter = 0; // 用于生成唯一ID
+
+        function throttle(func, limit) {
+            let inThrottle;
+            return function() {
+                const args = arguments;
+                const context = this;
+                if (!inThrottle) {
+                    func.apply(context, args);
+                    inThrottle = true;
+                    setTimeout(() => inThrottle = false, limit);
+                }
+            }
+        }
+        
+        // 图层数据存储
+        const layers = {
+            'countries': { data: { '110m': null, '10m': null }, group: null, visible: false, type: 'polygon', pattern: /admin_0_(countries|sovereignty)/i },
+            'states': { data: { '110m': null, '10m': null }, group: null, visible: false, type: 'polygon', pattern: /admin_1_states_provinces/i },
+            'cities': { data: { '110m': null, '10m': null }, group: null, visible: false, type: 'point', pattern: /populated_places/i }
+        };
+        
+        // 初始化图层组
+        Object.keys(layers).forEach(layerId => {
+            layers[layerId].group = layersGroup.append("g")
+                .attr("class", `layer-group layer-${layerId}`)
+                .style("display", "none");
+        });
+        
+        // 加载多个 Shapefile 文件
+        function loadShapefiles(files, resolution) {
+            if (!files || files.length === 0) return;
+            
+            const fileGroups = {};
+            
+            Array.from(files).forEach(file => {
+                const baseName = file.name.replace(/\.(shp|dbf|shx|prj|cpg)$/i, '');
+                if (!fileGroups[baseName]) {
+                    fileGroups[baseName] = {
+                        shp: null, dbf: null, shx: null, prj: null, cpg: null
+                    };
+                }
+                const ext = file.name.split('.').pop().toLowerCase();
+                fileGroups[baseName][ext] = file;
+            });
+            
+            document.getElementById("info").textContent = `⏳ 正在加载 ${Object.keys(fileGroups).length} 个 Shapefile...`;
+            
+            let loadedCount = 0;
+            let totalGroups = 0;
+            let hasCountryLayer = false;
+            
+            Object.keys(fileGroups).forEach(baseName => {
+                const group = fileGroups[baseName];
+                
+                if (!group.shp) return;
+                totalGroups++;
+                
+                let matchedLayerId = null;
+                const fileName = group.shp.name.toLowerCase();
+                
+                if (layers.countries.pattern.test(fileName)) matchedLayerId = 'countries';
+                else if (layers.states.pattern.test(fileName)) matchedLayerId = 'states';
+                else if (layers.cities.pattern.test(fileName)) matchedLayerId = 'cities';
+
+                if (!matchedLayerId) {
+                    console.warn(`No matching layer for ${fileName}`);
+                    totalGroups--;
+                    return;
+                }
+                
+                if (matchedLayerId === 'countries' && resolution === '110m') hasCountryLayer = true;
+                
+                const shpPromise = new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = reject;
+                    reader.readAsArrayBuffer(group.shp);
+                });
+                
+                const dbfPromise = group.dbf ? new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => resolve(e.target.result);
+                    reader.onerror = reject;
+                    reader.readAsArrayBuffer(group.dbf);
+                }) : Promise.resolve(null);
+                
+                Promise.all([shpPromise, dbfPromise]).then(([shpBuffer, dbfBuffer]) => {
+                    if (dbfBuffer) {
+                        return shapefile.open(shpBuffer, dbfBuffer);
+                    } else {
+                        return shapefile.open(shpBuffer);
+                    }
+                }).then(source => {
+                    const features = [];
+                    function readNext() {
+                        return source.read().then(result => {
+                            if (result.done) return features;
+                            features.push(result.value);
+                            return readNext();
+                        });
+                    }
+                    return readNext();
+                }).then(features => {
+                    const geojson = { type: "FeatureCollection", features: features };
+                    processLayerData(matchedLayerId, geojson, resolution);
+                    loadedCount++;
+                    
+                    document.getElementById("info").textContent = 
+                        `✅ 已加载 ${resolution} resolution ${loadedCount}/${totalGroups} 个图层 (${matchedLayerId}: ${features.length} 要素)`;
+                    
+                    if (loadedCount === totalGroups && hasCountryLayer) {
+                        setTimeout(() => {
+                            document.getElementById('layer-countries').checked = true;
+                            toggleLayer('countries', true);
+                            document.getElementById("info").textContent = 
+                                `✅ 所有图层加载完成!已自动显示国家边界`;
+                        }, 500);
+                    }
+                }).catch(error => {
+                    console.error(`加载 ${baseName} 失败:`, error);
+                    document.getElementById("info").textContent = 
+                        `❌ 加载 ${baseName} 失败: ${error.message}`;
+                });
+            });
+        }
+        
+        function processLayerData(layerId, geojson, resolution) {
+            geojson.features.forEach((f, i) => {
+                f.id = `${layerId}-${resolution}-${i}`;
+            });
+            layers[layerId].data[resolution] = geojson;
+            const statusEl = document.getElementById(`status-${layerId}-${resolution}`);
+            if (statusEl) {
+                statusEl.textContent = `${resolution}: ✓ ${geojson.features.length}`;
+                statusEl.classList.add('loaded');
+            }
+            console.log(`Loaded ${layerId} (${resolution}) with ${geojson.features.length} features.`);
+            scheduleUpdate();
+        }
+        
+        function renderLayer(layerId, resolution) {
+            const layer = layers[layerId];
+            
+            const otherResolution = resolution === '110m' ? '10m' : '110m';
+            if (layers[layerId].data[otherResolution]) {
+                layer.group.selectAll("path").data([], d => d.id).exit().remove();
+                layer.group.selectAll("circle").data([], d => d.id).exit().remove();
+            }
+
+            let data = layer.data[resolution];
+
+            if (!data) {
+                resolution = '110m';
+                data = layer.data[resolution];
+            }
+            if (!data) {
+                layer.group.selectAll("*").remove();
+                return;
+            }
+
+            let features = data.features;
+            const featureIdentifier = d => d.id;
+
+            if (resolution === '10m') {
+                const center = projection.invert([width / 2, height / 2]);
+                if (!center) return;
+                
+                const currentZoom = d3.zoomTransform(svg.node()).k;
+                const baseAngle = Math.PI / 2;
+                const zoomFactor = Math.max(0.3, Math.min(1, 12 / currentZoom));
+                const visibleAngle = baseAngle * zoomFactor;
+
+                features = features.filter(f => {
+                    const centroid = d3.geoCentroid(f);
+                    const distance = d3.geoDistance(centroid, center);
+                    return distance < visibleAngle;
+                });
+                
+                const maxFeatures = Math.floor(300 + currentZoom * 20);
+                if (features.length > maxFeatures) {
+                    features = features
+                        .map(f => ({
+                            feature: f,
+                            distance: d3.geoDistance(d3.geoCentroid(f), center)
+                        }))
+                        .sort((a, b) => a.distance - b.distance)
+                        .slice(0, maxFeatures)
+                        .map(item => item.feature);
+                    console.log(`⚡ ${layerId} 性能优化: 从 ${data.features.length} 个要素过滤到 ${features.length} 个 (${currentZoom.toFixed(1)}x 缩放)`);
+                } else {
+                    console.log(`✓ ${layerId} 渲染: ${features.length} 个要素, 可见角度 ${(visibleAngle * 180 / Math.PI).toFixed(1)}°`);
+                }
+            }
+
+            if (layer.type === 'polygon') {
+                const paths = layer.group.selectAll("path")
+                    .data(features, featureIdentifier);
+
+                paths.exit().remove();
+
+                paths.enter()
+                    .append("path")
+                    .attr("class", "layer-country")
+                    .on("click", function(event, d) {
+                        if (pinMode) return;
+                        event.stopPropagation();
+                        const centroid = d3.geoCentroid(d);
+                        handleFeatureClick(centroid, d);
+                    })
+                    .on("mouseover", function(event, d) { showTooltip(event, d); })
+                    .on("mousemove", moveTooltip)
+                    .on("mouseout", hideTooltip)
+                    .merge(paths)
+                    .attr("d", path);
+
+            } else if (layer.type === 'point') {
+                const circles = layer.group.selectAll("circle")
+                    .data(features, featureIdentifier);
+
+                circles.exit().remove();
+
+                circles.enter()
+                    .append("circle")
+                    .attr("class", "layer-city")
+                    .attr("r", d => {
+                        const pop = d.properties.POP_MAX || d.properties.pop_max || 0;
+                        return Math.max(1, Math.log(pop) / 3);
+                    })
+                    .on("mouseover", function(event, d) { showTooltip(event, d); })
+                    .on("mousemove", moveTooltip)
+                    .on("mouseout", hideTooltip)
+                    .on("click", function(event, d) {
+                        if (pinMode) return;
+                        event.stopPropagation();
+                        const coords = d.geometry.coordinates;
+                        handleFeatureClick(coords, d);
+                    })
+                    .merge(circles)
+                    .attr("transform", d => {
+                        const coords = d.geometry.coordinates;
+                        const projected = projection(coords);
+                        return projected ? `translate(${projected[0]},${projected[1]})` : null;
+                    })
+                    .style("display", d => {
+                        const coords = d.geometry.coordinates;
+                        const center = projection.invert([width / 2, height / 2]);
+                        return d3.geoDistance(coords, center) < Math.PI / 2 ? "block" : "none";
+                    });
+            }
+        }
+        
+        // 图钉功能 - 改进版,支持文本标签
+        function createPin(coords, name = '', addToPanel = true) {
+            const pinId = `pin-${editLayerIdCounter++}`;
+            const pinData = {
+                id: pinId,
+                coords: coords,
+                name: name,
+                label: name,
+                type: 'pin',
+                group: pinsGroup.append("g").attr("class", "pin-group").attr("id", pinId)
+            };
+            
+            const projected = projection(coords);
+            if (!projected) return;
+            
+            const pinGroup = pinData.group.append("g")
+                .datum({type: "Point", coordinates: coords})
+                .attr("class", "pin-point")
+                .attr("transform", `translate(${projected[0]},${projected[1]})`)
+                .on("click", function(event) {
+                    event.stopPropagation();
+                    handlePinClick(coords, pinData);
+                })
+                .on("dblclick", function(event) {
+                    event.stopPropagation();
+                    editPinLabel(pinData);
+                })
+                .on("mouseover", function() {
+                    d3.select(this).select(".pin-head").attr("r", 6);
+                })
+                .on("mouseout", function() {
+                    d3.select(this).select(".pin-head").attr("r", 5);
+                });
+            
+            pinGroup.append("line")
+                .attr("class", "pin-needle")
+                .attr("x1", 0)
+                .attr("y1", 5)
+                .attr("x2", 0)
+                .attr("y2", 20)
+                .attr("stroke", "#666")
+                .attr("stroke-width", 1.5)
+                .attr("stroke-linecap", "round");
+            
+            pinGroup.append("circle")
+                .attr("class", "pin-head")
+                .attr("cx", 0)
+                .attr("cy", 0)
+                .attr("r", 5)
+                .attr("fill", "#ff6b35")
+                .attr("stroke", "#fff")
+                .attr("stroke-width", 2);
+            
+            pinGroup.append("circle")
+                .attr("cx", -1.5)
+                .attr("cy", -1.5)
+                .attr("r", 2)
+                .attr("fill", "#ffaa88")
+                .attr("opacity", 0.6);
+            
+            // 添加标签组
+            const labelGroup = pinData.group.append("g")
+                .attr("class", "pin-label")
+                .datum({type: "Point", coordinates: coords});
+            
+            pinData.labelGroup = labelGroup;
+            
+            // Create a placeholder background for dragging, even if there's no label initially
+            const labelBg = labelGroup.append("rect")
+                .attr("class", "pin-label-bg")
+                .style("fill", "none")
+                .style("pointer-events", "all"); // Make it draggable even if invisible
+            
+            pinData.labelBg = labelBg;
+
+            pins.push(pinData);
+            
+            if (addToPanel) {
+                addEditItemToPanel(pinData);
+            }
+            
+            updatePinLabel(pinData);
+            makeLabelDraggable(pinData); // Attach drag handler on creation
+            return pinData;
+        }
+        
+        function updatePinLabel(pinData) {
+            if (!pinData.labelGroup) return;
+
+            // Only remove previously drawn dynamic elements (line, rect, text) to preserve group and handlers
+            pinData.labelGroup.selectAll("line.pin-label-line, rect.pin-label-bg, text.pin-label-text").remove();
+
+            // Draw the connector line first, so it's behind the label
+            pinData.labelGroup.append("line").attr("class", "pin-label-line");
+
+            if (!pinData.label || pinData.label.trim() === '') {
+                // clear any transform used during dragging
+                pinData.labelGroup.attr("transform", null);
+                return;
+            }
+
+            const projected = projection(pinData.coords);
+            const center = [-projection.rotate()[0], -projection.rotate()[1]];
+            const isVisible = projected && d3.geoDistance(pinData.coords, center) < Math.PI / 2;
+
+            if (!isVisible) {
+                // clear rendered label contents if not visible
+                pinData.labelGroup.attr("transform", null);
+                return;
+            }
+
+            // 初始化偏移（如果未设置）
+            if (pinData.labelXOffset === undefined) pinData.labelXOffset = 0;
+            if (pinData.labelYOffset === undefined) pinData.labelYOffset = -40; // Default offset
+
+            // Ensure any temporary drag transform is removed so we calculate absolute positions
+            pinData.labelGroup.attr("transform", null);
+
+            let finalX = projected[0] + (pinData.labelXOffset || 0);
+            let finalY = projected[1] + (pinData.labelYOffset || 0);
+
+            // 文本 (先渲染一次以获取bbox)
+            const text = pinData.labelGroup.append("text")
+                .attr("class", "pin-label-text")
+                .attr("x", finalX)
+                .attr("y", finalY)
+                .text(pinData.label);
+
+            const bbox = text.node().getBBox();
+            const padding = 10;
+
+            // Boundary collision detection and line shortening
+            let constrainedX = finalX;
+            let constrainedY = finalY;
+
+            if (bbox.x < padding) {
+                constrainedX = padding + bbox.width / 2;
+            }
+            if (bbox.x + bbox.width > width - padding) {
+                constrainedX = width - padding - bbox.width / 2;
+            }
+            if (bbox.y < padding) {
+                constrainedY = padding + bbox.height / 2;
+            }
+            if (bbox.y + bbox.height > height - padding) {
+                constrainedY = height - padding - bbox.height / 2;
+            }
+
+            if (constrainedX !== finalX || constrainedY !== finalY) {
+                finalX = constrainedX;
+                finalY = constrainedY;
+            }
+
+            // Re-apply final position to text
+            text.attr("x", finalX).attr("y", finalY);
+            const finalBbox = text.node().getBBox();
+
+            pinData.labelGroup.select(".pin-label-line")
+                .attr("x1", projected[0])
+                .attr("y1", projected[1] - 5) // Start from just above the pin head
+                .attr("x2", finalX)
+                .attr("y2", finalY - finalBbox.height / 2)
+                .attr("stroke", "var(--primary-color, #00d4ff)")
+                .attr("stroke-width", 1.5)
+                .attr("fill", "none");
+
+            // 背景框 - 添加双击事件和拖动提示
+            const labelBg = pinData.labelGroup.insert("rect", "text")
+                .attr("class", "pin-label-bg")
+                .attr("x", finalBbox.x - 4)
+                .attr("y", finalBbox.y - 2)
+                .attr("width", finalBbox.width + 8)
+                .attr("height", finalBbox.height + 4)
+                .style("cursor", "move")
+                .on("dblclick", function(event) {
+                    event.stopPropagation();
+                    editPinLabel(pinData);
+                })
+                .on("click", function(event) {
+                    event.stopPropagation();
+                });
+
+            // 添加title提示
+            labelBg.append("title").text("双击编辑 / 拖动移动");
+
+            // 为文本也添加相同的事件
+            text.style("cursor", "move")
+                .on("dblclick", function(event) {
+                    event.stopPropagation();
+                    editPinLabel(pinData);
+                })
+                .on("click", function(event) {
+                    event.stopPropagation();
+                });
+
+            text.append("title").text("双击编辑 / 拖动移动");
+
+            // 保存文本元素引用
+            pinData.labelTextElement = text;
+            pinData.labelBg = labelBg; // Save reference to the background
+
+            // Ensure drag handler is attached (if not already)
+            try {
+                // If labelGroup already has drag behavior, reapply to be safe
+                makeLabelDraggable(pinData);
+            } catch (e) {
+                console.warn('makeLabelDraggable not available yet', e);
+            }
+        }
+// Drag handler is now attached on creation in createPin
+               
+        function editPinLabel(pinData) {
+            showPinLabelEditor(pinData);
+        }
+
+        function showPinLabelEditor(pinData) {
+            const projected = projection(pinData.coords);
+            if (!projected) return;
+
+            const labelBbox = pinData.labelTextElement.node().getBBox();
+            const inputX = labelBbox.x;
+            const inputY = labelBbox.y;
+
+            const input = document.createElement("input");
+            input.className = "label-input";
+            input.type = "text";
+            input.value = pinData.label || pinData.name;
+            input.placeholder = "编辑图钉标签...";
+            input.style.left = inputX + "px";
+            input.style.top = inputY + "px";
+            input.style.width = (labelBbox.width + 20) + "px";
+
+            document.getElementById("map-container").appendChild(input);
+            input.focus();
+            input.select();
+
+            const finishEdit = () => {
+                const newLabel = input.value.trim();
+                pinData.label = newLabel;
+                updatePinLabel(pinData);
+                updateEditItemInPanel(pinData);
+                input.remove();
+
+                if (newLabel === '') {
+                    document.getElementById("info").textContent = `📍 已隐藏图钉标签`;
+                } else {
+                    document.getElementById("info").textContent = `📍 已更新图钉标签: ${newLabel}`;
+                }
+            };
+
+            const cancelEdit = () => {
+                input.remove();
+            };
+
+            input.addEventListener("blur", finishEdit);
+            input.addEventListener("keypress", (e) => {
+                if (e.key === "Enter") finishEdit();
+            });
+            input.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") cancelEdit();
+            });
+        }
+        
+        function handlePinClick(coords, pinData) {
+            if (selectedPoints.length === 0) {
+                selectedPoints.push(coords);
+                document.getElementById("info").textContent = `📍 已选择图钉起点`;
+            } else if (selectedPoints.length === 1) {
+                selectedPoints.push(coords);
+                document.getElementById("info").textContent = `📍 已创建图钉连接线`;
+                drawConnection(selectedPoints[0], selectedPoints[1]);
+                selectedPoints = [];
+            }
+        }
+        
+        function updatePins() {
+            pins.forEach(pin => {
+                const projected = projection(pin.coords);
+                const center = [-projection.rotate()[0], -projection.rotate()[1]];
+                const isVisible = projected && d3.geoDistance(pin.coords, center) < Math.PI / 2;
+                
+                if (isVisible) {
+                    pin.group.select(".pin-point")
+                        .attr("transform", `translate(${projected[0]},${projected[1]})`)
+                        .style("display", "block");
+                    updatePinLabel(pin);
+                } else {
+                    pin.group.select(".pin-point").style("display", "none");
+                    if (pin.labelGroup) pin.labelGroup.selectAll("*").remove();
+                }
+            });
+        }
+        
+        svg.on("click", function(event) {
+            if (!pinMode) return;
+            
+            const [x, y] = d3.pointer(event);
+            const coords = projection.invert([x, y]);
+            
+            if (coords) {
+                const pin = createPin(coords, `Pin ${pins.length + 1}`);
+                document.getElementById("info").textContent = `📍 已放置图钉 #${pins.length} - 双击可编辑标签`;
+            }
+        });
+        
+        function handleFeatureClick(centroid, feature) {
+            if (selectedPoints.length === 0) {
+                selectedPoints.push(centroid);
+                const name = getFeatureName(feature);
+                document.getElementById("info").textContent = `✅ 已选择起点: ${name}`;
+            } else if (selectedPoints.length === 1) {
+                selectedPoints.push(centroid);
+                const name = getFeatureName(feature);
+                document.getElementById("info").textContent = `✅ 已创建连接线到: ${name}`;
+                drawConnection(selectedPoints[0], selectedPoints[1]);
+                selectedPoints = [];
+            }
+        }
+        
+        function getFeatureName(feature) {
+            const p = feature.properties;
+            return p.NAME_EN || p.NAME || p.name || p.NAME_LONG || p.SOVEREIGNT || p.ADMIN || p.admin || "未知";
+        }
+        
+        function showTooltip(event, feature) {
+            const name = getFeatureName(feature);
+            const props = feature.properties;
+            let info = `<strong>${name}</strong>`;
+            
+            if (props.POP_MAX || props.pop_max) {
+                info += `<br>人口: ${(props.POP_MAX || props.pop_max).toLocaleString()}`;
+            }
+            if (props.ISO_A2 || props.iso_a2) {
+                info += `<br>代码: ${props.ISO_A2 || props.iso_a2}`;
+            }
+            
+            tooltip.style("display", "block").html(info);
+        }
+        
+        function moveTooltip(event) {
+            tooltip
+                .style("left", (event.pageX + 15) + "px")
+                .style("top", (event.pageY - 10) + "px");
+        }
+        
+        function hideTooltip() {
+            tooltip.style("display", "none");
+        }
+        
+        function toggleLayer(layerId, visible) {
+            layers[layerId].visible = visible;
+            layers[layerId].group.style("display", visible ? "block" : "none");
+            
+            if (visible) {
+                if (!layers[layerId].data['110m']) {
+                    document.getElementById("info").textContent = `⚠️ 请先加载 ${layerId} 的 110m 数据`;
+                }
+                renderLayer(layerId, currentResolution);
+            }
+        }
+        
+        function updateAllLayers() {
+            Object.keys(layers).forEach(layerId => {
+                if (layers[layerId].visible) {
+                    layers[layerId].group.selectAll("path").attr("d", path);
+                    
+                    if (layers[layerId].type === 'point') {
+                        layers[layerId].group.selectAll("circle")
+                            .attr("transform", d => {
+                                const coords = d.geometry.coordinates;
+                                const projected = projection(coords);
+                                return projected ? `translate(${projected[0]},${projected[1]})` : null;
+                            })
+                            .style("display", d => {
+                                const coords = d.geometry.coordinates;
+                                const center = [-projection.rotate()[0], -projection.rotate()[1]];
+                                return d3.geoDistance(coords, center) < Math.PI / 2 ? "block" : "none";
+                            });
+                    }
+                }
+            });
+            
+            currentBoundaries.forEach(boundary => {
+                boundary.group.selectAll("path").attr("d", path);
+            });
+        }
+        
+        function drawConnection(point1, point2, label = '', addToPanel = true, color = null) {
+            let pathData;
+            
+            // 如果没有提供颜色，生成一个随机颜色
+            const randomColor = color || d3.interpolateRainbow(Math.random());
+
+            if (useParabolicArcs) {
+                const interpolate = d3.geoInterpolate(point1, point2);
+                const midPoint = interpolate(0.5);
+                const distance = d3.geoDistance(point1, point2);
+                // 引入随机性以区分发射角度
+                const arcHeight = distance * (0.2 + Math.random() * 0.3); // 高度在0.2到0.5倍距离之间随机
+                const controlLat = midPoint[1] + arcHeight * 50;
+                const controlPoint = [midPoint[0], Math.min(90, Math.max(-90, controlLat))];
+                
+                const points = [];
+                for (let i = 0; i <= 50; i++) {
+                    const t = i / 50;
+                    const t2 = 1 - t;
+                    const lon = t2 * t2 * point1[0] + 2 * t2 * t * controlPoint[0] + t * t * point2[0];
+                    const lat = t2 * t2 * point1[1] + 2 * t2 * t * controlPoint[1] + t * t * point2[1];
+                    points.push([lon, lat]);
+                }
+                pathData = { type: "LineString", coordinates: points };
+            } else {
+                const interpolate = d3.geoInterpolate(point1, point2);
+                const points = [];
+                for (let i = 0; i <= 100; i++) {
+                    points.push(interpolate(i / 100));
+                }
+                pathData = { type: "LineString", coordinates: points };
+            }
+            
+            const connId = `connection-${editLayerIdCounter++}`;
+            const currentLineWidth = document.getElementById("lineWidthSlider").value;
+            const midPoint = d3.geoInterpolate(point1, point2)(0.5);
+            const connectionGroup = connectionsGroup.append("g")
+                .attr("class", "connection-group")
+                .attr("id", connId);
+
+            const arcPath = connectionGroup.append("path")
+                .datum(pathData)
+                .attr("class", "connection-arc")
+                .attr("d", path)
+                .style("stroke", randomColor) // 应用随机颜色
+                .style("stroke-width", `${currentLineWidth}px`);
+
+            if (!useParabolicArcs) {
+                const dash1 = Math.floor(Math.random() * 15) + 5; // 5-20
+                const dash2 = Math.floor(Math.random() * 15) + 5; // 5-20
+                arcPath.style("stroke-dasharray", `${dash1}, ${dash2}`);
+            }
+            
+            const center = [-projection.rotate()[0], -projection.rotate()[1]];
+            const isVisible1 = d3.geoDistance(point1, center) < Math.PI / 2;
+            const p1 = projection(point1);
+            connectionGroup.append("circle")
+                .datum({type: "Point", coordinates: point1})
+                .attr("class", "connection-point")
+                .attr("cx", p1 ? p1[0] : -999)
+                .attr("cy", p1 ? p1[1] : -999)
+                .attr("r", 5)
+                .style("display", isVisible1 ? "block" : "none");
+
+            const isVisible2 = d3.geoDistance(point2, center) < Math.PI / 2;
+            const p2 = projection(point2);
+            connectionGroup.append("circle")
+                .datum({type: "Point", coordinates: point2})
+                .attr("class", "connection-point")
+                .attr("cx", p2 ? p2[0] : -999)
+                .attr("cy", p2 ? p2[1] : -999)
+                .attr("r", 5)
+                .style("display", isVisible2 ? "block" : "none");
+            
+            const connectorLine = connectionGroup.append("line")
+                .attr("class", "connection-label-connector")
+                .style("stroke", "var(--primary-color, #00d4ff)")
+                .style("stroke-width", 1)
+                .style("stroke-dasharray", "3, 3")
+                .style("display", "none");
+
+            const labelGroup = connectionGroup.append("g")
+                .attr("class", "label-group")
+                .datum({type: "Point", coordinates: midPoint});
+            
+            const labelBg = labelGroup.append("rect")
+                .attr("class", "connection-label-bg")
+                .style("display", "none");
+            
+            const labelText = labelGroup.append("text")
+                .attr("class", "connection-label")
+                .style("display", "none");
+            
+            const connectionData = {
+                id: connId,
+                point1, point2, pathData, midPoint,
+                group: connectionGroup,
+                labelText: label,
+                labelGroup: labelGroup,
+                labelBg: labelBg,
+                labelTextElement: labelText,
+                connectorLine: connectorLine,
+                labelYOffset: 0, // Initialize Y offset for label collision
+                labelXOffset: 0,
+                type: 'connection'
+            };
+            connections.push(connectionData);
+            
+            arcPath.on("dblclick", function(event) {
+                event.stopPropagation();
+                showLabelEditor(connectionData, event);
+            });
+            
+            updateConnectionLabel(connectionData);
+            makeLabelDraggable(connectionData); // Attach the new unified drag handler
+            
+            if (addToPanel) {
+                addEditItemToPanel(connectionData);
+            }
+            
+            return connectionData;
+        }
+        
+        function showLabelEditor(connectionData, event) {
+            const midProj = projection(connectionData.midPoint);
+            if (!midProj) return;
+            
+            const input = document.createElement("input");
+            input.className = "label-input";
+            input.type = "text";
+            input.value = connectionData.labelText || "";
+            input.placeholder = "输入连接线标签...";
+            input.style.left = (midProj[0] - 75) + "px";
+            input.style.top = (midProj[1] - 15) + "px";
+            
+            document.getElementById("map-container").appendChild(input);
+            input.focus();
+            input.select();
+            
+            const finishEdit = () => {
+                const newLabel = input.value.trim();
+                connectionData.labelText = newLabel;
+                updateConnectionLabel(connectionData);
+                updateEditItemInPanel(connectionData);
+                input.remove();
+                
+                if (newLabel === '') {
+                    document.getElementById("info").textContent = `➡️ 已隐藏连接线标签`;
+                } else {
+                    document.getElementById("info").textContent = `➡️ 已更新连接线标签: ${newLabel}`;
+                }
+            };
+            
+            const cancelEdit = () => {
+                input.remove();
+            };
+            
+            input.addEventListener("blur", finishEdit);
+            input.addEventListener("keypress", (e) => {
+                if (e.key === "Enter") finishEdit();
+            });
+            input.addEventListener("keydown", (e) => {
+                if (e.key === "Escape") cancelEdit();
+            });
+        }
+        
+        function updateConnectionLabel(connectionData) {
+            const midProj = projection(connectionData.midPoint);
+            const center = [-projection.rotate()[0], -projection.rotate()[1]];
+            const isVisible = midProj && d3.geoDistance(connectionData.midPoint, center) < Math.PI / 2;
+            
+            if (connectionData.labelText && isVisible) {
+                connectionData.labelTextElement
+                    .on("dblclick", null)
+                    .on("click", null);
+                
+                let finalX = midProj[0] + connectionData.labelXOffset;
+                let finalY = midProj[1] + 5 + connectionData.labelYOffset;
+
+                connectionData.labelTextElement
+                    .attr("x", finalX)
+                    .attr("y", finalY)
+                    .text(connectionData.labelText)
+                    .style("display", "block")
+                    .style("cursor", "move");
+                
+                const bbox = connectionData.labelTextElement.node().getBBox();
+                const padding = 10;
+
+                // Boundary collision detection and line shortening
+                let dx = finalX - midProj[0];
+                let dy = finalY - midProj[1];
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                let constrainedX = finalX;
+                let constrainedY = finalY;
+
+                if (bbox.x < padding) {
+                    constrainedX = padding + bbox.width / 2;
+                }
+                if (bbox.x + bbox.width > width - padding) {
+                    constrainedX = width - padding - bbox.width / 2;
+                }
+                if (bbox.y < padding) {
+                    constrainedY = padding + bbox.height / 2;
+                }
+                if (bbox.y + bbox.height > height - padding) {
+                    constrainedY = height - padding - bbox.height / 2;
+                }
+
+                // If the label was constrained, shorten the line
+                if (constrainedX !== finalX || constrainedY !== finalY) {
+                    finalX = constrainedX;
+                    finalY = constrainedY;
+                }
+
+                // Apply corrected position
+                connectionData.labelTextElement
+                    .attr("x", finalX)
+                    .attr("y", finalY)
+                    .on("dblclick", function(event) {
+                        event.stopPropagation();
+                        showLabelEditor(connectionData, event);
+                    })
+                    .on("click", function(event) {
+                        event.stopPropagation();
+                    });
+                
+                // 移除之前的title并添加新的
+                connectionData.labelTextElement.selectAll("title").remove();
+                connectionData.labelTextElement.append("title").text("双击编辑 / 拖动移动");
+                
+                const finalBbox = connectionData.labelTextElement.node().getBBox();
+                
+                connectionData.labelBg
+                    .on("dblclick", null)
+                    .on("click", null);
+                
+                connectionData.labelBg.selectAll("title").remove();
+                
+                connectionData.labelBg
+                    .attr("x", finalBbox.x - 4)
+                    .attr("y", finalBbox.y - 2)
+                    .attr("width", finalBbox.width + 8)
+                    .attr("height", finalBbox.height + 4)
+                    .style("display", "block")
+                    .style("cursor", "move")
+                    .on("dblclick", (event) => {
+                        event.stopPropagation();
+                        showLabelEditor(connectionData, event);
+                    })
+                    .on("click", (event) => event.stopPropagation());
+                
+                connectionData.labelBg.append("title").text("双击编辑 / 拖动移动");
+
+                // Update connector line to point to the new, constrained position
+                connectionData.connectorLine
+                    .attr("x1", midProj[0])
+                    .attr("y1", midProj[1])
+                    .attr("x2", finalX)
+                    .attr("y2", finalY - finalBbox.height / 2) // Connect to middle of the label
+                    .style("display", "block");
+
+            } else {
+                connectionData.labelTextElement.style("display", "none");
+                connectionData.labelBg.style("display", "none");
+                connectionData.connectorLine.style("display", "none");
+            }
+        }
+        
+        // 检测两个矩形是否碰撞
+        function checkCollision(rect1, rect2, padding = 5) {
+            return !(rect1.right + padding < rect2.left - padding ||
+                     rect1.left - padding > rect2.right + padding ||
+                     rect1.bottom + padding < rect2.top - padding ||
+                     rect1.top - padding > rect2.bottom + padding);
+        }
+
+        // 获取所有可见标签的边界框
+        function getAllVisibleLabelBounds() {
+            const bounds = [];
+            const center = [-projection.rotate()[0], -projection.rotate()[1]];
+            
+            // 连接线标签
+            connections.forEach(conn => {
+                if (conn.labelText && conn.labelBg.style('display') !== 'none') {
+                    const bgNode = conn.labelBg.node();
+                    if (bgNode) {
+                        const bbox = bgNode.getBBox();
+                        bounds.push({
+                            data: conn,
+                            type: 'connection',
+                            left: bbox.x,
+                            right: bbox.x + bbox.width,
+                            top: bbox.y,
+                            bottom: bbox.y + bbox.height,
+                            width: bbox.width,
+                            height: bbox.height,
+                            centerX: bbox.x + bbox.width / 2,
+                            centerY: bbox.y + bbox.height / 2
+                        });
+                    }
+                }
+            });
+            
+            // 图钉标签
+            pins.forEach(pin => {
+                if (pin.label && pin.labelGroup) {
+                    const bgNode = pin.labelGroup.select('.pin-label-bg').node();
+                    if (bgNode && d3.select(bgNode).style('display') !== 'none') {
+                        const bbox = bgNode.getBBox();
+                        bounds.push({
+                            data: pin,
+                            type: 'pin',
+                            left: bbox.x,
+                            right: bbox.x + bbox.width,
+                            top: bbox.y,
+                            bottom: bbox.y + bbox.height,
+                            width: bbox.width,
+                            height: bbox.height,
+                            centerX: bbox.x + bbox.width / 2,
+                            centerY: bbox.y + bbox.height / 2
+                        });
+                    }
+                }
+            });
+            
+            return bounds;
+        }
+
+        // 解决碰撞 - 移动标签以避免重叠
+        function resolveCollision(draggedBound, allBounds) {
+            let attempts = 0;
+            const maxAttempts = 50;
+            let hasCollision = true;
+            
+            while (hasCollision && attempts < maxAttempts) {
+                hasCollision = false;
+                
+                for (let other of allBounds) {
+                    if (other === draggedBound) continue;
+                    
+                    if (checkCollision(draggedBound, other, 3)) {
+                        hasCollision = true;
+                        
+                        // 计算推开方向
+                        const dx = draggedBound.centerX - other.centerX;
+                        const dy = draggedBound.centerY - other.centerY;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        if (distance < 1) {
+                            // 如果完全重叠，随机推开
+                            draggedBound.left += (Math.random() - 0.5) * 20;
+                            draggedBound.top += (Math.random() - 0.5) * 20;
+                        } else {
+                            // 沿着两个中心的连线推开
+                            const pushDistance = 5;
+                            draggedBound.left += (dx / distance) * pushDistance;
+                            draggedBound.top += (dy / distance) * pushDistance;
+                        }
+                        
+                        // 更新边界
+                        draggedBound.right = draggedBound.left + draggedBound.width;
+                        draggedBound.bottom = draggedBound.top + draggedBound.height;
+                        draggedBound.centerX = draggedBound.left + draggedBound.width / 2;
+                        draggedBound.centerY = draggedBound.top + draggedBound.height / 2;
+                    }
+                }
+                
+                attempts++;
+            }
+            
+            return draggedBound;
+        }
+
+        function adjustLabelLayout() {
+            const center = [-projection.rotate()[0], -projection.rotate()[1]];
+            const nodes = [];
+
+            // 1. Create nodes for the simulation
+            connections.forEach(conn => {
+                const isVisible = conn.labelText && d3.geoDistance(conn.midPoint, center) < Math.PI / 2;
+                if (isVisible) {
+                    const rectElement = conn.labelBg.node();
+                    if (rectElement) {
+                        const bbox = rectElement.getBoundingClientRect();
+                        const midProj = projection(conn.midPoint);
+                        if (bbox.width > 0 && bbox.height > 0 && midProj) {
+                            nodes.push({
+                                conn: conn,
+                                width: bbox.width,
+                                height: bbox.height,
+                                x: midProj[0] + conn.labelXOffset,
+                                y: midProj[1] + conn.labelYOffset,
+                                fx: midProj[0], // Anchor point
+                                fy: midProj[1]  // Anchor point
+                            });
+                        }
+                    }
+                }
+            });
+
+            if (nodes.length < 2) return;
+
+            // 2. Create and run the simulation
+            const simulation = d3.forceSimulation(nodes)
+                .force("collide", d3.forceCollide(d => Math.max(d.width, d.height) / 2 + 5).strength(0.8))
+                .force("charge", d3.forceManyBody().strength(-100))
+                .force("link", d3.forceLink().links([])) // No visible links, but use for anchor
+                .force("anchor", d3.forceX(d => d.fx).strength(0.01))
+                .force("anchorY", d3.forceY(d => d.fy).strength(0.01))
+                .stop();
+
+            // Run simulation for a fixed number of ticks
+            const n = Math.ceil(Math.log(simulation.alphaMin()) / Math.log(1 - simulation.alphaDecay()));
+            for (let i = 0; i < n; ++i) {
+                simulation.tick();
+            }
+
+            // 3. Apply the results
+            nodes.forEach(node => {
+                const midProj = projection(node.conn.midPoint);
+                if(midProj){
+                    node.conn.labelXOffset = node.x - midProj[0];
+                    node.conn.labelYOffset = node.y - midProj[1];
+                    updateConnectionLabel(node.conn);
+                }
+            });
+        }
+
+        function updateConnections(isNewEvent = false) {
+            if (isNewEvent) {
+                // For new events, reset all positions before recalculating
+                connections.forEach(c => {
+                    c.labelXOffset = 0;
+                    c.labelYOffset = 0;
+                });
+            }
+
+            connections.forEach(conn => {
+                conn.group.select(".connection-arc").attr("d", path);
+                const center = [-projection.rotate()[0], -projection.rotate()[1]];
+                
+                const point1Data = conn.group.selectAll("circle").filter((d, i) => i === 0).datum();
+                if (d3.geoDistance(point1Data.coordinates, center) < Math.PI / 2) {
+                    const p1 = projection(point1Data.coordinates);
+                    conn.group.selectAll("circle").filter((d, i) => i === 0).attr("cx", p1[0]).attr("cy", p1[1]).style("display", "block");
+                } else {
+                    conn.group.selectAll("circle").filter((d, i) => i === 0).style("display", "none");
+                }
+                
+                const point2Data = conn.group.selectAll("circle").filter((d, i) => i === 1).datum();
+                if (d3.geoDistance(point2Data.coordinates, center) < Math.PI / 2) {
+                    const p2 = projection(point2Data.coordinates);
+                    conn.group.selectAll("circle").filter((d, i) => i === 1).attr("cx", p2[0]).attr("cy", p2[1]).style("display", "block");
+                } else {
+                    conn.group.selectAll("circle").filter((d, i) => i === 1).style("display", "none");
+                }
+                
+                updateConnectionLabel(conn);
+            });
+            
+            if (isNewEvent) {
+                setTimeout(adjustLabelLayout, 50);
+            }
+        }
+        
+        function clearConnections() {
+            connectionsGroup.selectAll("*").remove();
+            connections.forEach(conn => {
+                removeEditItemFromPanel(conn.id);
+            });
+            connections = [];
+            selectedPoints = [];
+            clearBoundaries();
+        }
+        
+        function clearBoundaries() {
+            [...currentBoundaries].forEach(boundary => removeBoundary(boundary.id));
+        }
+
+        function clearAllMarkings() {
+            connectionsGroup.selectAll("*").remove();
+            connections.forEach(conn => {
+                removeEditItemFromPanel(conn.id);
+            });
+            connections = [];
+            selectedPoints = [];
+
+            pinsGroup.selectAll("*").remove();
+            pins.forEach(pin => {
+                removeEditItemFromPanel(pin.id);
+            });
+            pins = [];
+
+            clearBoundaries();
+
+            document.getElementById("info").textContent = "💥 已清除所有用户标识";
+        }
+        
+        // 编辑图层面板管理
+        function addEditItemToPanel(item) {
+            const container = document.getElementById('edit-layers-content');
+            const placeholder = container.querySelector('.layer-item-placeholder');
+            if (placeholder) {
+                placeholder.remove();
+            }
+
+            const itemDiv = document.createElement('div');
+            itemDiv.className = 'edit-layer-item';
+            itemDiv.id = `edit-${item.id}`;
+            
+            let icon = '';
+            let name = '';
+            if (item.type === 'pin') {
+                icon = '📍';
+                name = item.label || item.name || 'Pin';
+            } else if (item.type === 'connection') {
+                icon = '➡️';
+                name = item.labelText || 'Connection';
+            } else if (item.type === 'boundary') {
+                icon = '🔶';
+                name = item.name || 'Boundary';
+            }
+            
+            itemDiv.innerHTML = `
+                <input type="checkbox" class="layer-checkbox" id="check-${item.id}" checked>
+                <span class="edit-item-icon">${icon}</span>
+                <label class="edit-item-name" for="check-${item.id}">${name}</label>
+                <button class="edit-item-btn" data-id="${item.id}">🗑️</button>
+            `;
+            
+            container.appendChild(itemDiv);
+
+            itemDiv.querySelector('.layer-checkbox').addEventListener('change', function(e) {
+                const isVisible = e.target.checked;
+                d3.select(`#${item.id}`).style('display', isVisible ? 'block' : 'none');
+            });
+
+            itemDiv.querySelector('button').addEventListener('click', function() {
+                if (item.type === 'pin') {
+                    removePin(item.id);
+                } else if (item.type === 'connection') {
+                    removeConnection(item.id);
+                } else if (item.type === 'boundary') {
+                    removeBoundary(item.id);
+                }
+            });
+        }
+        
+        function updateEditItemInPanel(item) {
+            const itemDiv = document.getElementById(`edit-${item.id}`);
+            if (!itemDiv) return;
+            
+            let name = '';
+            if (item.type === 'pin') {
+                name = item.label || item.name || 'Pin';
+            } else if (item.type === 'connection') {
+                name = item.labelText || 'Connection';
+            } else if (item.type === 'boundary') {
+                name = item.name || 'Boundary';
+            }
+            
+            const label = itemDiv.querySelector('.edit-item-name');
+            if (label) {
+                label.textContent = name;
+            }
+        }
+        
+        function removeEditItemFromPanel(itemId) {
+            const panelItem = document.getElementById(`edit-${itemId}`);
+            if (panelItem) {
+                panelItem.remove();
+            }
+
+            const container = document.getElementById('edit-layers-content');
+            if (container.children.length === 0) {
+                container.innerHTML = '<div class="layer-item-placeholder" style="color: #88ddff; font-size: 11px; padding: 10px; text-align: center;">暂无编辑内容</div>';
+            }
+        }
+        
+        function removePin(pinId) {
+            d3.select(`#${pinId}`).remove();
+            pins = pins.filter(p => p.id !== pinId);
+            removeEditItemFromPanel(pinId);
+        }
+        
+        function removeConnection(connId) {
+            d3.select(`#${connId}`).remove();
+            connections = connections.filter(c => c.id !== connId);
+            removeEditItemFromPanel(connId);
+        }
+        
+        // 事件管理 - 改进的解析逻辑
+        function parseEventInput(input) {
+            // 新的图钉事件格式: ;时间;事件名;地点;描述
+            if (input.startsWith(';')) {
+                const parts = input.substring(1).split(';').map(s => s.trim());
+                if (parts.length === 4) {
+                    return {
+                        type: 'pin-event',
+                        time: parts[0],
+                        name: parts[1],
+                        location: parts[2],
+                        description: parts[3],
+                        id: Date.now() + Math.random()
+                    };
+                }
+            }
+            
+            // 原有的连接线事件格式
+            const parts = input.split(';').map(s => s.trim());
+            if (parts.length === 5) {
+                return {
+                    type: 'connection-event',
+                    time: parts[0],
+                    name: parts[1],
+                    location1: parts[2],
+                    relation: parts[3],
+                    location2: parts[4],
+                    id: Date.now() + Math.random()
+                };
+            }
+            
+            return null;
+        }
+        
+        async function addEvent(eventData) {
+            allEvents.push(eventData);
+            events.push(eventData);
+            renderEventList();
+            
+            if (eventData.type === 'connection-event') {
+                const label = `${eventData.time}, ${eventData.name}, ${eventData.relation}`;
+                const success = await findLocationAndConnect(eventData.location1, eventData.location2, label);
+                return success;
+            } else if (eventData.type === 'pin-event') {
+                // Assuming pin creation always succeeds if it doesn't throw
+                findLocationAndCreatePin(eventData);
+                return true; 
+            }
+            return false;
+        }
+
+        function findLocationAndCreatePin(eventData) {
+            const locResult = findLocationCoordsAndFeature(eventData.location);
+            if (locResult) {
+                const label = `${eventData.time}\n${eventData.name}\n${eventData.description}`;
+                const pin = createPin(locResult.coords, eventData.name, true);
+                pin.label = label;
+                updatePinLabel(pin);
+                updateEditItemInPanel(pin);
+
+                document.getElementById("info").textContent = `📍 已在 ${eventData.location} 创建事件图钉`;
+                
+                // 定位到新创建的图钉
+                const targetRotation = [-locResult.coords[0], -locResult.coords[1]];
+                d3.transition().duration(1500)
+                    .tween("rotate", function() {
+                        const r = d3.interpolate(projection.rotate(), targetRotation);
+                        return function(t) {
+                            projection.rotate(r(t));
+                            rotation = projection.rotate();
+                            scheduleUpdate();
+                        };
+                    });
+
+            } else {
+                document.getElementById("info").textContent = `⚠️ 找不到地点: ${eventData.location}`;
+                alert(`无法找到地点: ${eventData.location}`);
+            }
+        }
+        
+        async function findLocationAndConnect(loc1Name, loc2Name, label) {
+            console.log(`Attempting to connect: ${loc1Name} and ${loc2Name}`);
+
+            // Get verified locations, which may involve user interaction
+            const loc1Result = await getVerifiedLocation(loc1Name);
+            if (!loc1Result) {
+                console.log(`Event creation cancelled because location 1 (${loc1Name}) was not confirmed.`);
+                return false; // Stop if the first location is cancelled
+            }
+
+            const loc2Result = await getVerifiedLocation(loc2Name);
+            if (!loc2Result) {
+                console.log(`Event creation cancelled because location 2 (${loc2Name}) was not confirmed.`);
+                return false; // Stop if the second location is cancelled
+            }
+            
+            // At this point, both loc1Result and loc2Result are valid
+            const randomColor = d3.interpolateRainbow(Math.random());
+            drawConnection(loc1Result.coords, loc2Result.coords, label, true, randomColor);
+
+            // Use the verified names for highlighting
+            const finalLoc1Name = loc1Result.name;
+            const finalLoc2Name = loc2Result.name;
+
+            const feature1 = loc1Result.feature || findFeatureByName(finalLoc1Name);
+            const feature2 = loc2Result.feature || findFeatureByName(finalLoc2Name);
+
+            if (feature1) {
+                highlightFeatureBoundary(feature1, finalLoc1Name);
+                console.log(`✓ Highlighting feature for ${finalLoc1Name}`);
+            } else {
+                console.warn(`⚠ Could not find a feature to highlight for ${finalLoc1Name}`);
+            }
+            
+            if (feature2) {
+                highlightFeatureBoundary(feature2, finalLoc2Name);
+                console.log(`✓ Highlighting feature for ${finalLoc2Name}`);
+            } else {
+                console.warn(`⚠ Could not find a feature to highlight for ${finalLoc2Name}`);
+            }
+
+            document.getElementById("info").textContent = `✅ 已创建事件: ${finalLoc1Name} → ${finalLoc2Name}`;
+
+            // Rotate to the first location
+            setTimeout(() => {
+                const targetRotation = [-loc1Result.coords[0], -loc1Result.coords[1]];
+                d3.transition().duration(1500)
+                    .tween("rotate", function() {
+                        const r = d3.interpolate(projection.rotate(), targetRotation);
+                        return function(t) {
+                            projection.rotate(r(t));
+                            rotation = projection.rotate();
+                            scheduleUpdate();
+                        };
+                    });
+            }, 300);
+            return true;
+        }
+        
+        // -------------------- Manual Location Selection Flow --------------------
+
+        // Global promise resolver for manual selection
+        let manualSelectionPromise = { resolve: null, reject: null };
+
+        function promptForManualSelection(locationName) {
+            return new Promise((resolve, reject) => {
+                const searchPanel = document.getElementById("search-panel");
+                const searchInput = document.getElementById("searchInput");
+                const searchResults = document.getElementById("searchResults");
+                const info = document.getElementById("info");
+
+                const cleanup = () => {
+                    // Hide panel and clear results
+                    searchPanel.classList.remove('active');
+                    searchResults.innerHTML = '';
+                    searchInput.value = '';
+                    
+                    // Remove the temporary UI elements
+                    const header = document.getElementById('manual-selection-header');
+                    if (header) header.remove();
+                    const cancelBtn = document.getElementById('manual-selection-cancel-btn');
+                    if (cancelBtn) cancelBtn.remove();
+                    
+                    // Reset the promise state
+                    manualSelectionPromise.resolve = null;
+                    manualSelectionPromise.reject = null;
+                };
+
+                const resolver = (value) => {
+                    cleanup();
+                    resolve(value);
+                };
+                
+                const rejecter = (err) => {
+                    cleanup();
+                    reject(err);
+                };
+                
+                // If a prompt is already active, reject it before starting a new one.
+                if (manualSelectionPromise.reject) {
+                    manualSelectionPromise.reject(new Error("A new selection prompt was initiated."));
+                }
+
+                manualSelectionPromise.resolve = resolver;
+                manualSelectionPromise.reject = rejecter;
+
+                searchPanel.classList.add('active');
+                searchPanel.style.transform = 'translateX(0)';
+
+                const promptHeader = document.createElement('div');
+                promptHeader.id = 'manual-selection-header';
+                promptHeader.style.padding = '5px 0 10px';
+                promptHeader.style.borderBottom = '1px solid var(--primary-color, #00d4ff)';
+                promptHeader.style.marginBottom = '10px';
+                promptHeader.innerHTML = `
+                    <strong style="color: var(--primary-color, #00d4ff);">请手动选择位置</strong>
+                    <p style="font-size: 11px; color: #ffaa00; margin-top: 4px;">未能自动找到: "${locationName}"</p>
+                `;
+                
+                const cancelButton = document.createElement('button');
+                cancelButton.id = 'manual-selection-cancel-btn';
+                cancelButton.textContent = '取消此事件';
+                cancelButton.className = 'control-button';
+                cancelButton.style.marginTop = '10px';
+                cancelButton.style.background = '#8B0000';
+                cancelButton.style.borderColor = '#FF4500';
+
+                cancelButton.onclick = () => {
+                    rejecter(new Error(`Selection for "${locationName}" cancelled by user.`));
+                };
+
+                // Prepend header and append button
+                searchPanel.prepend(promptHeader);
+                searchResults.after(cancelButton);
+
+                searchInput.value = locationName;
+                searchLocation(locationName);
+                searchInput.focus();
+
+                info.textContent = `⏳ 请为 "${locationName}" 从列表中选择一个正确的位置...`;
+            });
+        }
+
+        async function getVerifiedLocation(locationName) {
+            // First, try to find it automatically
+            let locationResult = findLocationCoordsAndFeature(locationName);
+
+            if (locationResult) {
+                console.log(`✓ Automatically found location: ${locationName}`);
+                return locationResult;
+            } else {
+                // If not found, prompt the user
+                console.warn(`⚠ Could not find location automatically: ${locationName}. Prompting user.`);
+                try {
+                    const manualResult = await promptForManualSelection(locationName);
+                    console.log(`✓ User selected location: ${manualResult.name}`);
+                    return manualResult;
+                } catch (error) {
+                    console.error(error.message);
+                    document.getElementById("info").textContent = `❌ ${error.message}`;
+                    return null; // Indicate cancellation or failure
+                }
+            }
+        }
+        
+        // --------------------------------------------------------------------
+
+        function findLocationCoordsAndFeature(locationString) {
+            if (!citiesDatabase) {
+                console.error("citiesDatabase is not loaded. Cannot perform search.");
+                return null;
+            }
+
+            const parts = locationString.split(',').map(p => p.trim());
+            const countryQuery = parts[0];
+            const stateQuery = parts.length > 1 ? parts[1] : null;
+            const cityQuery = parts.length > 2 ? parts[2] : null;
+
+            // --- Country Search ---
+            const countryAliases = (chineseNameMap[countryQuery] || [countryQuery]).map(n => n.toLowerCase());
+            const country = citiesDatabase.find(c => countryAliases.includes(c.name.toLowerCase()));
+            
+            if (!country) {
+                console.error(`❌ Country not found for query: "${countryQuery}". Tried aliases: ${countryAliases.join(', ')}`);
+                return null;
+            }
+
+            if (!stateQuery) {
+                console.log(`✓ Found Country: ${country.name} for query "${countryQuery}"`);
+                return { coords: [parseFloat(country.longitude.replace(',', '.')), parseFloat(country.latitude.replace(',', '.'))], name: country.name, feature: null };
+            }
+
+            // --- State Search ---
+            if (!country.states || country.states.length === 0) {
+                 console.warn(`⚠ Country "${country.name}" has no states data.`);
+                 return null;
+            }
+            const stateAliases = (chineseNameMap[stateQuery] || [stateQuery]).map(n => n.toLowerCase());
+            const state = country.states.find(s => stateAliases.includes(s.name.toLowerCase()));
+
+            if (!state) {
+                console.error(`❌ State not found for query: "${stateQuery}" in "${country.name}". Tried aliases: ${stateAliases.join(', ')}`);
+                return null;
+            }
+            
+            if (!cityQuery) {
+                 console.log(`✓ Found State: ${state.name} for query "${stateQuery}"`);
+                return { coords: [parseFloat(state.longitude.replace(',', '.')), parseFloat(state.latitude.replace(',', '.'))], name: `${state.name}, ${country.name}`, feature: null };
+            }
+
+            // --- City Search ---
+            if (!state.cities || state.cities.length === 0) {
+                 console.warn(`⚠ State "${state.name}" has no cities data.`);
+                 return null;
+            }
+            const cityAliases = (chineseNameMap[cityQuery] || [cityQuery]).map(n => n.toLowerCase());
+            const city = state.cities.find(c => cityAliases.includes(c.name.toLowerCase()));
+
+            if (city) {
+                 console.log(`✓ Found City: ${city.name} for query "${cityQuery}"`);
+                return { coords: [parseFloat(city.longitude.replace(',', '.')), parseFloat(city.latitude.replace(',', '.'))], name: `${city.name}, ${state.name}, ${country.name}`, feature: null };
+            }
+
+            console.error(`❌ City not found for query: "${cityQuery}" in "${state.name}". Tried aliases: ${cityAliases.join(', ')}`);
+            return null;
+        }
+
+        function findFeatureByName(locationName) {
+            if (!locationName) return null;
+            const normalizedQuery = locationName.split(',')[0].trim();
+
+            let searchNames = [normalizedQuery.toLowerCase()];
+            
+            // 如果是中文名称，添加对应的英文名称
+            if (chineseNameMap[normalizedQuery]) {
+                searchNames = [...new Set(searchNames.concat(chineseNameMap[normalizedQuery].map(n => n.toLowerCase())))];
+                console.log(`Searching for feature with names: ${searchNames.join(', ')}`);
+            }
+
+            for (const layerId of ['countries', 'states']) {
+                const layer = layers[layerId];
+                if (!layer.data) continue;
+
+                for (const resolution of ['10m', '110m']) {
+                    const data = layer.data[resolution];
+                    if (!data || !data.features) continue;
+
+                    for (const feature of data.features) {
+                        const props = feature.properties;
+                        const featureNames = [
+                            props.NAME, props.name, props.ADMIN, props.admin,
+                            props.NAME_LONG, props.NAME_EN, props.SOVEREIGNT,
+                            props.NAME_ZH, props.name_zh // 添加可能的中文字段
+                        ].filter(p => typeof p === 'string').map(n => n.trim().toLowerCase());
+
+                        for (const sn of searchNames) {
+                            if (featureNames.includes(sn)) {
+                                console.log(`Found feature for highlighting: ${getFeatureName(feature)} (matched: ${sn})`);
+                                return feature;
+                            }
+                        }
+                    }
+                }
+            }
+            console.warn(`No feature found for location: ${locationName}`);
+            return null;
+        }
+        
+        function highlightFeatureBoundary(feature, displayName) {
+            const boundaryId = `boundary-${editLayerIdCounter++}`;
+            const boundaryGroup = layersGroup.append("g")
+                .attr("class", "boundary-highlight-group")
+                .attr("id", boundaryId);
+            
+            boundaryGroup.append("path")
+                .datum(feature)
+                .attr("class", "boundary-highlight")
+                .attr("d", path);
+            
+            const boundaryData = {
+                id: boundaryId,
+                group: boundaryGroup,
+                name: displayName || getFeatureName(feature),
+                type: 'boundary'
+            };
+            currentBoundaries.push(boundaryData);
+            
+            addEditItemToPanel(boundaryData);
+        }
+
+        function removeBoundary(boundaryId) {
+            d3.select(`#${boundaryId}`).remove();
+            currentBoundaries = currentBoundaries.filter(b => b.id !== boundaryId);
+            removeEditItemFromPanel(boundaryId);
+        }
+        
+        function renderEventList() {
+            const eventList = document.getElementById('eventList');
+            if (events.length === 0) {
+                eventList.innerHTML = '<div style="color: #88ddff; font-size: 11px; padding: 10px; text-align: center;">暂无事件</div>';
+                return;
+            }
+            eventList.innerHTML = events.map(e => `
+                <div class="event-item" style="font-size: 11px; padding: 8px; margin: 4px 0;">
+                    <div class="event-time" style="font-size: 10px;">${e.time}</div>
+                    <div class="event-name" style="font-size: 12px; margin: 3px 0;">${e.name}</div>
+                    <div class="event-route" style="font-size: 11px;">${e.location1} → ${e.location2}</div>
+                    <div class="event-route" style="font-size: 10px; color: #ffaa00;">${e.relation}</div>
+                    <div class="event-actions" style="margin-top: 6px;">
+                        <button class="event-btn" onclick="locateEvent(${e.id})">📍</button>
+                        <button class="event-btn" onclick="deleteEvent(${e.id})">🗑️</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        window.locateEvent = function(eventId) {
+            const event = events.find(e => e.id === eventId);
+            if (!event) return;
+            
+            const loc1Result = findLocationCoordsAndFeature(event.location1);
+            if (loc1Result) {
+                const targetRotation = [-loc1Result.coords[0], -loc1Result.coords[1]];
+                d3.transition().duration(1500)
+                    .tween("rotate", function() {
+                        const r = d3.interpolate(projection.rotate(), targetRotation);
+                        return function(t) {
+                            projection.rotate(r(t));
+                            rotation = projection.rotate();
+                            scheduleUpdate();
+                        };
+                    });
+            }
+        };
+        
+        window.deleteEvent = function(eventId) {
+            events = events.filter(e => e.id !== eventId);
+            allEvents = allEvents.filter(e => e.id !== eventId);
+            renderEventList();
+        };
+        
+        // 时间范围筛选
+        function filterEventsByTimeRange(startDate, endDate) {
+            if (!startDate && !endDate) {
+                events = [...allEvents];
+            } else {
+                events = allEvents.filter(e => {
+                    const eventDate = new Date(e.time);
+                    if (startDate && eventDate < new Date(startDate)) return false;
+                    if (endDate && eventDate > new Date(endDate)) return false;
+                    return true;
+                });
+            }
+            
+            // 清除当前显示的连接和边界
+            clearConnections();
+            
+            // 重新绘制筛选后的事件
+            events.forEach(event => {
+                if (event.type === 'connection-event') {
+                    const label = `${event.time}, ${event.name}, ${event.relation}`;
+                    findLocationAndConnect(event.location1, event.location2, label);
+                } else if (event.type === 'pin-event') {
+                    findLocationAndCreatePin(event);
+                }
+            });
+            
+            renderEventList();
+            document.getElementById("info").textContent = `✅ 显示 ${events.length} 个事件`;
+        }
+        
+        function exportEvents() {
+            const dataStr = JSON.stringify(allEvents, null, 2);
+            const dataBlob = new Blob([dataStr], {type: 'application/json'});
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `events_${new Date().toISOString().split('T')[0]}.json`;
+            link.click();
+            URL.revokeObjectURL(url);
+            document.getElementById("info").textContent = `✅ 已导出 ${allEvents.length} 个事件`;
+        }
+        
+        function importEvents(file) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const imported = JSON.parse(e.target.result);
+                    allEvents = imported;
+                    events = [...allEvents];
+                    renderEventList();
+                    document.getElementById("info").textContent = `✅ 已导入 ${events.length} 个事件`;
+                    
+                    clearConnections();
+                    events.forEach(event => {
+                        findLocationAndConnect(event.location1, event.location2, event.relation);
+                    });
+                } catch (error) {
+                    alert("导入失败: " + error.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        // 搜索功能(支持中文) - 改进版,搜索后创建图钉
+        function loadCitiesDatabase(file) {
+            document.getElementById("info").textContent = "⏳ 正在加载城市数据库...";
+            const reader = new FileReader();
+            
+            reader.onload = function(e) {
+                try {
+                    citiesDatabase = JSON.parse(e.target.result);
+                    document.getElementById("info").textContent = 
+                        `✅ 城市数据库已加载 (${citiesDatabase.length} 个国家)`;
+                    document.getElementById("search-panel").classList.add("active");
+                } catch (error) {
+                    alert("城市数据库解析失败: " + error.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        function searchLocation(query) {
+            if (!query || !citiesDatabase) {
+                document.getElementById("searchResults").innerHTML = "";
+                return;
+            }
+
+            const lowerQuery = query.toLowerCase();
+            const results = [];
+
+            citiesDatabase.forEach(country => {
+                if (country.name.toLowerCase().includes(lowerQuery)) {
+                    results.push({
+                        type: 'country',
+                        name: country.name,
+                        path: country.name,
+                        lon: country.longitude,
+                        lat: country.latitude,
+                        feature: null
+                    });
+                }
+                country.states?.forEach(state => {
+                    if (state.name.toLowerCase().includes(lowerQuery)) {
+                        results.push({
+                            type: 'state',
+                            name: state.name,
+                            path: `${country.name}, ${state.name}`,
+                            lon: state.longitude,
+                            lat: state.latitude,
+                            feature: null
+                        });
+                    }
+                    state.cities?.forEach(city => {
+                        if (city.name.toLowerCase().includes(lowerQuery)) {
+                            results.push({
+                                type: 'city',
+                                name: city.name,
+                                path: `${country.name}, ${state.name}, ${city.name}`,
+                                lon: city.longitude,
+                                lat: city.latitude,
+                                feature: null
+                            });
+                        }
+                    });
+                });
+            });
+            
+            displaySearchResults(results.slice(0, 50));
+        }
+        
+        function displaySearchResults(results) {
+            const resultsContainer = document.getElementById("searchResults");
+            
+            if (results.length === 0) {
+                resultsContainer.innerHTML = '<div style="color: #88ddff; padding: 10px;">未找到匹配结果</div>';
+                return;
+            }
+            
+            resultsContainer.innerHTML = results.map((result, index) => `
+                <div class="search-result-item" data-index="${index}">
+                    <div class="result-name">${result.name}</div>
+                    <div class="result-path">${result.path}</div>
+                </div>
+            `).join('');
+            
+            resultsContainer.querySelectorAll('.search-result-item').forEach((item, index) => {
+                item.addEventListener('click', () => selectSearchResult(results[index]));
+            });
+        }
+        
+        function selectSearchResult(result) {
+            // If we are in the middle of a manual selection, resolve the promise.
+            if (manualSelectionPromise.resolve) {
+                const locationData = {
+                    coords: [parseFloat(result.lon.replace(',', '.')), parseFloat(result.lat.replace(',', '.'))],
+                    name: result.path,
+                    // Attempt to find a matching feature to pass along, though it's optional here.
+                    feature: findFeatureByName(result.path) 
+                };
+                manualSelectionPromise.resolve(locationData);
+                // The resolver calls cleanup(), so no need to do it here.
+                return; 
+            }
+
+            // Normal search behavior (create pin and locate)
+            clearBoundaries();
+            
+            const coords = [parseFloat(result.lon.replace(',', '.')), parseFloat(result.lat.replace(',', '.'))];
+            const targetRotation = [-coords[0], -coords[1]];
+            
+            svg.interrupt();
+            
+            d3.transition().duration(1500)
+                .tween("rotate", function() {
+                    const r = d3.interpolate(projection.rotate(), targetRotation);
+                    return function(t) {
+                        projection.rotate(r(t));
+                        rotation = projection.rotate();
+                        scheduleUpdate();
+                    };
+                });
+            
+            // 创建图钉
+            setTimeout(() => {
+                const pin = createPin(coords, result.path);
+                document.getElementById("info").textContent = `📍 已在 ${result.path} 创建图钉`;
+                
+                // 尝试高亮边界
+                const featureToHighlight = result.feature || findFeatureByName(result.path);
+                if (featureToHighlight) {
+                    highlightFeatureBoundary(featureToHighlight, result.path);
+                }
+            }, 1500);
+        }
+        
+        function toggleArcMode() {
+            useParabolicArcs = !useParabolicArcs;
+            document.getElementById("toggleArcMode").textContent = useParabolicArcs ? "🌐 切换大圆弧模式" : "🌈 切换抛物线模式";
+            
+            if (connections.length > 0) {
+                const existingConnections = connections.map(c => ({
+                    point1: c.point1, point2: c.point2, labelText: c.labelText, id: c.id
+                }));
+                
+                connections.forEach(conn => {
+                    d3.select(`#${conn.id}`).remove();
+                    removeEditItemFromPanel(conn.id);
+                });
+                connections = [];
+                
+                existingConnections.forEach(conn => {
+                    const newConn = drawConnection(conn.point1, conn.point2, conn.labelText, false);
+                    // 使用原来的ID更新面板
+                    removeEditItemFromPanel(newConn.id);
+                    newConn.id = conn.id;
+                    newConn.group.attr("id", conn.id);
+                    addEditItemToPanel(newConn);
+                });
+            }
+            
+            document.getElementById("info").textContent = 
+                `🌈 已切换到${useParabolicArcs ? "抛物线" : "大圆弧"}模式`;
+        }
+        
+        // 主题颜色更新
+        function updateThemeColors(primary, secondary) {
+            document.documentElement.style.setProperty('--primary-color', primary);
+            document.documentElement.style.setProperty('--secondary-color', secondary);
+        }
+        
+        const rotationSpeed = 0.3;
+        d3.timer(function(elapsed) {
+            if (isRotating) {
+                rotation[0] = (rotation[0] + rotationSpeed) % 360;
+                projection.rotate(rotation);
+                scheduleUpdate();
+            }
+        });
+        
+        let pendingUpdate = false;
+        
+        function scheduleUpdate() {
+            if (!pendingUpdate) {
+                pendingUpdate = true;
+                requestAnimationFrame(() => {
+                    svg.selectAll(".sphere, .graticule").attr("d", path);
+                    updateAllLayers();
+                    updateConnections(false); // Do not recalculate layout on regular updates
+                    updatePins();
+                    pendingUpdate = false;
+                });
+            }
+        }
+        
+        const throttledRender = throttle(() => {
+            if (currentResolution === '10m') {
+                Object.keys(layers).forEach(layerId => {
+                    if (layers[layerId].visible) {
+                        renderLayer(layerId, '10m');
+                    }
+                });
+            }
+        }, 200);
+
+        let dragEndTimeout = null;
+        const drag = d3.drag()
+            .on("start", function() {
+                isRotating = false;
+                updateRotationStatus();
+                svg.interrupt();
+                if (dragEndTimeout) {
+                    clearTimeout(dragEndTimeout);
+                    dragEndTimeout = null;
+                }
+            })
+            .on("drag", function(event) {
+                const rotate = projection.rotate();
+                const k = 75 / projection.scale();
+                projection.rotate([rotate[0] + event.dx * k, rotate[1] - event.dy * k]);
+                rotation = projection.rotate();
+                scheduleUpdate();
+                
+                if (currentResolution === '10m') {
+                    throttledRender();
+                }
+            })
+            .on("end", function() {
+                scheduleUpdate();
+                if (currentResolution === '10m') {
+                    dragEndTimeout = setTimeout(() => {
+                        Object.keys(layers).forEach(layerId => {
+                            if (layers[layerId].visible) {
+                                renderLayer(layerId, '10m');
+                            }
+                        });
+                    }, 100);
+                }
+            });
+        
+        svg.call(drag);
+        
+        let zoomTimeout = null;
+        const zoom = d3.zoom()
+            .scaleExtent([0.5, 20])
+            .on("zoom", function(event) {
+                if (!initialScale) return;
+                
+                const newScale = event.transform.k;
+                projection.scale(initialScale * newScale);
+                
+                document.getElementById('zoomSlider').value = newScale;
+                document.getElementById('zoomValue').textContent = `${newScale.toFixed(1)}x`;
+
+                const newResolution = newScale >= lodThreshold ? '10m' : '110m';
+                if (newResolution !== currentResolution) {
+                    currentResolution = newResolution;
+                    const resolutionName = newResolution === '10m' ? '高精度 (1:10m)' : '标准 (1:110m)';
+                    console.log(`切换到 ${resolutionName} 分辨率 (缩放: ${newScale.toFixed(1)}x)`);
+                    document.getElementById("info").textContent = `🗺️ 已切换到 ${resolutionName} 地图`;
+                    
+                    if (zoomTimeout) {
+                        clearTimeout(zoomTimeout);
+                    }
+                    
+                    Object.keys(layers).forEach(layerId => {
+                        if (layers[layerId].visible) {
+                            renderLayer(layerId, currentResolution);
+                        }
+                    });
+                } else if (currentResolution === '10m') {
+                    throttledRender();
+                }
+                
+                scheduleUpdate();
+            });
+        
+        svg.call(zoom);
+        
+        const tooltip = d3.select("#tooltip");
+        
+        // 事件监听器
+        document.getElementById("shapefilesInput110m").addEventListener("change", function(e) {
+            loadShapefiles(e.target.files, '110m');
+        });
+        
+        document.getElementById("shapefilesInput10m").addEventListener("change", function(e) {
+            loadShapefiles(e.target.files, '10m');
+        });
+        
+        Object.keys(layers).forEach(layerId => {
+            const checkbox = document.getElementById(`layer-${layerId}`);
+            if (checkbox) {
+                checkbox.addEventListener('change', function(e) {
+                    toggleLayer(layerId, e.target.checked);
+                });
+            }
+        });
+        
+        document.getElementById("resetBtn").addEventListener("click", function() {
+            svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
+        });
+        
+        document.getElementById("toggleGraticule").addEventListener("click", function() {
+            showGraticule = !showGraticule;
+            graticulePath.style("display", showGraticule ? "block" : "none");
+        });
+        
+        document.getElementById("toggleRotation").addEventListener("click", function() {
+            isRotating = !isRotating;
+            updateRotationStatus();
+        });
+        
+        document.getElementById("togglePinMode").addEventListener("click", function() {
+            pinMode = !pinMode;
+            this.classList.toggle('active');
+            this.textContent = pinMode ? "📍 退出图钉模式" : "📍 图钉模式";
+            document.getElementById("info").textContent = pinMode ? 
+                "📍 图钉模式已激活,点击地图放置图钉" : "图钉模式已关闭";
+        });
+        
+        document.getElementById("clearConnections").addEventListener("click", function() {
+            clearConnections();
+            document.getElementById("info").textContent = "🗑️ 已清除所有连接线";
+        });
+
+        document.getElementById("clearAllMarkings").addEventListener("click", clearAllMarkings);
+        
+        document.getElementById("toggleArcMode").addEventListener("click", toggleArcMode);
+        
+        document.getElementById("citiesDbInput").addEventListener("change", function(e) {
+            if (e.target.files[0]) loadCitiesDatabase(e.target.files[0]);
+        });
+        
+        document.getElementById("searchInput").addEventListener("input", function(e) {
+            searchLocation(e.target.value);
+        });
+        
+        document.getElementById("addEventBtn").addEventListener("click", async function() {
+            const multiLineInput = document.getElementById("eventInput").value;
+            const lines = multiLineInput.split('\n').filter(line => line.trim() !== '');
+            const addButton = this;
+
+            if (lines.length === 0) {
+                alert('请输入事件信息。');
+                return;
+            }
+
+            let addedCount = 0;
+            addButton.disabled = true;
+            addButton.textContent = '⏳ 处理中...';
+
+            try {
+                for (const line of lines) {
+                    const eventData = parseEventInput(line);
+                    if (eventData) {
+                        // Process events one by one, waiting for each to complete
+                        const success = await addEvent(eventData);
+                        if (success) {
+                            addedCount++;
+                        }
+                    } else {
+                        console.warn(`跳过格式错误的行: ${line}`);
+                    }
+                }
+
+                if (addedCount > 0) {
+                    document.getElementById("eventInput").value = '';
+                    document.getElementById("info").textContent = `✅ 已成功处理 ${addedCount} 个事件。`;
+                    // Final update after all events are processed
+                    updateConnections(true);
+                    updatePins();
+                } else {
+                    // This case now also handles scenarios where all events were cancelled.
+                    const infoText = document.getElementById("info").textContent;
+                    if (!infoText.includes('cancelled')) {
+                        alert('所有输入行的格式似乎都不正确或被取消。请检查格式:时间;事件名;地点1;关系;地点2');
+                    }
+                }
+            } finally {
+                addButton.disabled = false;
+                addButton.textContent = '➕ 添加事件';
+            }
+        });
+        
+        document.getElementById("filterEventsBtn").addEventListener("click", function() {
+            const startDate = document.getElementById("startDate").value;
+            const endDate = document.getElementById("endDate").value;
+            filterEventsByTimeRange(startDate, endDate);
+        });
+        
+        document.getElementById("showAllEventsBtn").addEventListener("click", function() {
+            document.getElementById("startDate").value = '';
+            document.getElementById("endDate").value = '';
+            filterEventsByTimeRange(null, null);
+        });
+        
+        document.getElementById("exportEvents").addEventListener("click", exportEvents);
+        
+        document.getElementById("importEvents").addEventListener("click", function() {
+            document.getElementById("importEventsFile").click();
+        });
+        
+        document.getElementById("importEventsFile").addEventListener("change", function(e) {
+            if (e.target.files[0]) importEvents(e.target.files[0]);
+        });
+        
+        const lineWidthSlider = document.getElementById("lineWidthSlider");
+        lineWidthSlider.addEventListener("input", function() {
+            const newWidth = this.value;
+            document.getElementById("lineWidthValue").textContent = `${newWidth}px`;
+            connectionsGroup.selectAll(".connection-arc").style("stroke-width", `${newWidth}px`);
+        });
+
+        const labelFontSizeSlider = document.getElementById("labelFontSizeSlider");
+        labelFontSizeSlider.addEventListener("input", function() {
+            const newSize = this.value;
+            document.getElementById("labelFontSizeValue").textContent = `${newSize}px`;
+            d3.selectAll(".connection-label, .pin-label-text").style("font-size", `${newSize}px`);
+            
+            // Update all labels to adjust background and lines
+            connections.forEach(updateConnectionLabel);
+            pins.forEach(updatePinLabel);
+        });
+        
+        document.getElementById("primaryColor").addEventListener("change", function() {
+            updateThemeColors(this.value, document.getElementById("secondaryColor").value);
+        });
+        
+        document.getElementById("secondaryColor").addEventListener("change", function() {
+            updateThemeColors(document.getElementById("primaryColor").value, this.value);
+        });
+
+        document.getElementById("zoomSlider").addEventListener("input", function() {
+            const newScale = +this.value;
+            const currentTransform = d3.zoomTransform(svg.node());
+            const newTransform = d3.zoomIdentity.translate(currentTransform.x, currentTransform.y).scale(newScale);
+            svg.call(zoom.transform, newTransform);
+        });
+        
+        function updateRotationStatus() {
+            const btn = document.getElementById("toggleRotation");
+            if (isRotating) {
+                btn.textContent = "⏸️ 暂停旋转";
+            } else {
+                btn.textContent = "▶️ 开始旋转";
+            }
+        }
+        
+        function handleResize() {
+            width = globeContainer.clientWidth;
+            height = globeContainer.clientHeight;
+            svg.attr('width', width).attr('height', height);
+            initialScale = Math.min(width, height) / 2.2;
+            const currentZoom = d3.zoomTransform(svg.node());
+            projection.scale(initialScale * currentZoom.k).translate([width / 2, height / 2]);
+            
+            // 更新眼睛形状的光晕
+            const rX = width / 2; // Horizontal radius is half the page width
+            const rY = initialScale * 1.3;
+            const cx = width / 2;
+            const cy = height / 2;
+            
+            // 定义眼睛形状的路径
+            const eyePath = `
+                M ${cx - rX}, ${cy}
+                Q ${cx}, ${cy - rY}, ${cx + rX}, ${cy}
+                Q ${cx}, ${cy + rY * 1.5}, ${cx - rX}, ${cy}
+                Z
+            `;
+            
+            svg.select(".sphere-glow")
+                .attr("d", eyePath);
+
+            scheduleUpdate();
+        }
+
+        window.addEventListener('resize', handleResize);
+        handleResize();
+        renderEventList();
+
+        function setupPanelFocusListeners() {
+            const panels = ['#layer-panel', '#search-panel'];
+            panels.forEach(panelSelector => {
+                const panel = document.querySelector(panelSelector);
+                if (!panel) return;
+
+                const inputs = panel.querySelectorAll('input, textarea');
+                inputs.forEach(input => {
+                    input.addEventListener('focus', () => {
+                        panel.classList.add('panel-focused');
+                    });
+                    input.addEventListener('blur', () => {
+                        panel.classList.remove('panel-focused');
+                    });
+                });
+            });
+        }
+        setupPanelFocusListeners();
+    
+        // -------------------- Unified Smooth Label Dragging Logic --------------------
+        function makeLabelDraggable(itemData) {
+            const labelGroup = itemData.labelGroup;
+            if (!labelGroup || labelGroup.__dragBound) return;
+            labelGroup.__dragBound = true;
+
+            const isPin = itemData.type === 'pin';
+            const connectorLineSelector = isPin ? ".pin-label-line" : ".connection-label-connector";
+            
+            const drag = d3.drag()
+                .on("start", function (event) {
+                    d3.select(this).raise(); 
+                    itemData._dragTempX = 0;
+                    itemData._dragTempY = 0;
+                    // Hide the connector line on drag start
+                    labelGroup.select(connectorLineSelector).style("display", "none");
+                })
+                .on("drag", function (event) {
+                    itemData._dragTempX = (itemData._dragTempX || 0) + event.dx;
+                    itemData._dragTempY = (itemData._dragTempY || 0) + event.dy;
+                    d3.select(this).attr("transform", `translate(${itemData._dragTempX}, ${itemData._dragTempY})`);
+                })
+                .on("end", function (event) {
+                    itemData.labelXOffset = (itemData.labelXOffset || 0) + (itemData._dragTempX || 0);
+                    itemData.labelYOffset = (itemData.labelYOffset || 0) + (itemData._dragTempY || 0);
+                    itemData._dragTempX = 0;
+                    itemData._dragTempY = 0;
+                    d3.select(this).attr("transform", null);
+                    
+                    // Show the line again and re-render the label to fix the line position
+                    labelGroup.select(connectorLineSelector).style("display", "block");
+                    if (isPin) {
+                        updatePinLabel(itemData);
+                    } else {
+                        updateConnectionLabel(itemData);
+                    }
+                });
+
+            labelGroup.call(drag);
+        }
+</script>
+</body>
+</html>
